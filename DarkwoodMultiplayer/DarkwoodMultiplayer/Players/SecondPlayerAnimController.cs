@@ -15,7 +15,7 @@ namespace DarkwoodMultiplayer.Players
             Run = 2
         }
 
-        private const float LegBlendSpeed = 7f;
+        private const float LegBlendSpeed = 15f;
 
         private tk2dSpriteAnimator _torsoAnimator;
         private tk2dSpriteAnimator _legsAnimator;
@@ -56,10 +56,29 @@ namespace DarkwoodMultiplayer.Players
                 ModRuntime.Log?.LogInfo("SecondPlayerAnimController: torso + legs animators ready.");
         }
 
+        private float _idleTime;
+
         private void LateUpdate()
         {
             if (_state == LocomotionState.Idle)
+            {
                 ResetLegsToStanding();
+                _idleTime += Time.deltaTime;
+                if (_idleTime > 0.15f && _currentLegsClip != null)
+                {
+                    if (_legsAnimator != null)
+                    {
+                        _legsAnimator.Stop();
+                        if (_legsAnimator.CurrentClip != null)
+                            _legsAnimator.SetFrame(0, false);
+                    }
+                    _currentLegsClip = null;
+                }
+            }
+            else
+            {
+                _idleTime = 0f;
+            }
         }
 
         public void ApplyNetworkSnapshot(
@@ -94,11 +113,18 @@ namespace DarkwoodMultiplayer.Players
             if (!string.IsNullOrEmpty(legsClip))
                 PlayLegs(legsClip);
             else if (state == LocomotionState.Idle)
-                StopLegs();
+            {
+                // Let LateUpdate handle the stop after a delay
+            }
             else if (state == LocomotionState.Walk)
                 PlayLegs(reverseLegs ? "LegsWalkReverse" : "LegsWalk");
             else if (state == LocomotionState.Run)
                 PlayLegs("LegsRun");
+
+            if (state == LocomotionState.Walk)
+                AlignLegsToFacing(legFacingY, snapRunToBody: false);
+            else if (state == LocomotionState.Run)
+                AlignLegsToFacing(legFacingY, snapRunToBody: true);
         }
 
         public void ApplySnapshot(LocomotionState state, bool flipX)
@@ -143,7 +169,11 @@ namespace DarkwoodMultiplayer.Players
             if (_legsAnimator == null)
                 return;
 
-            _legsAnimator.transform.rotation = Quaternion.Euler(90f, transform.eulerAngles.y, 0f);
+            Quaternion target = Quaternion.Euler(90f, transform.eulerAngles.y, 0f);
+            _legsAnimator.transform.rotation = Quaternion.Slerp(
+                _legsAnimator.transform.rotation,
+                target,
+                Time.deltaTime * LegBlendSpeed);
         }
 
         private void AlignLegsToFacing(short legFacingY, bool snapRunToBody)
@@ -158,11 +188,7 @@ namespace DarkwoodMultiplayer.Players
             }
 
             float y = _hasNetworkLegFacing ? legFacingY : transform.eulerAngles.y;
-            Quaternion dest = Quaternion.Euler(90f, y, 0f);
-            _legsAnimator.transform.rotation = Quaternion.Slerp(
-                _legsAnimator.transform.rotation,
-                dest,
-                Time.deltaTime * LegBlendSpeed);
+            _legsAnimator.transform.rotation = Quaternion.Euler(90f, y, 0f);
         }
 
         private void PlayTorso(string clipName)

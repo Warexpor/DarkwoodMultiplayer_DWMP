@@ -6,7 +6,9 @@ namespace DarkwoodMultiplayer.Players
     public sealed class RemotePlayerProxy : MonoBehaviour
     {
         private SecondPlayerAnimController _anim;
+        private Transform _shadow;
         private Vector3 _targetPosition;
+        private Vector3 _pushOffset;
         private bool _hasState;
 
         public static RemotePlayerProxy Spawn(ManualLogSource log)
@@ -32,6 +34,7 @@ namespace DarkwoodMultiplayer.Players
 
             RemotePlayerProxy proxy = clone.AddComponent<RemotePlayerProxy>();
             proxy._anim = clone.GetComponent<SecondPlayerAnimController>();
+            proxy._shadow = clone.transform.Find("Shadow");
             return proxy;
         }
 
@@ -84,12 +87,44 @@ namespace DarkwoodMultiplayer.Players
                 state.LegsClip);
         }
 
+        private static int _proxyCollideCount;
+
+        private void OnCollisionStay(Collision collision)
+        {
+            Player local = Player.Instance;
+            if (local == null || collision.rigidbody == null)
+                return;
+
+            bool isLocal = collision.rigidbody == local.Rigidbody;
+            if (isLocal && ++_proxyCollideCount % 60 == 0)
+                ModRuntime.Log?.LogInfo("[ProxyCollide] player push active isLocal=True");
+
+            if (!isLocal)
+                return;
+
+            Vector3 pushDir = transform.position - collision.transform.position;
+            pushDir.y = 0f;
+            if (pushDir.magnitude > 0.01f)
+                pushDir.Normalize();
+            else
+                pushDir = Vector3.zero;
+            pushDir.y = 0f;
+
+            float speed = Mathf.Clamp(collision.relativeVelocity.magnitude * 1.2f, 0f, 6f);
+            _pushOffset = pushDir * speed;
+        }
+
         private void LateUpdate()
         {
             if (!_hasState)
                 return;
 
-            transform.position = Vector3.Lerp(transform.position, _targetPosition, Time.deltaTime * 18f);
+            Vector3 target = _targetPosition + _pushOffset;
+            transform.position = Vector3.Lerp(transform.position, target, Time.deltaTime * 18f);
+            _pushOffset = Vector3.Lerp(_pushOffset, Vector3.zero, Time.deltaTime * 3f);
+
+            if (_shadow != null)
+                _shadow.eulerAngles = new Vector3(90f, 0f, 0f);
         }
     }
 

@@ -5,7 +5,9 @@ namespace DarkwoodMultiplayer.Networking
         Handshake = 1,
         PlayerState = 2,
         WorldSession = 3,
-        PhysicsState = 4
+        PhysicsState = 4,
+        ItemSpawn = 5,
+        LightState = 6
     }
 
     /// <summary>
@@ -148,5 +150,67 @@ namespace DarkwoodMultiplayer.Networking
         public float GetFloat() => _inner.GetFloat();
         public bool GetBool() => _inner.GetBool();
         public string GetString() => _inner.GetString();
+    }
+
+    public struct LightStateMessage
+    {
+        public float PosX, PosY, PosZ;
+        public bool IsOn;
+        public string ItemName;
+
+        public void Serialize(NetWriter writer)
+        {
+            writer.Put(PosX); writer.Put(PosY); writer.Put(PosZ);
+            writer.Put(IsOn);
+            writer.Put(ItemName ?? string.Empty);
+        }
+
+        public static LightStateMessage Deserialize(NetReader reader)
+        {
+            return new LightStateMessage
+            {
+                PosX = reader.GetFloat(),
+                PosY = reader.GetFloat(),
+                PosZ = reader.GetFloat(),
+                IsOn = reader.GetBool(),
+                ItemName = reader.GetString()
+            };
+        }
+    }
+
+    public struct ItemSpawnMessage
+    {
+        public string ItemType;
+        public float PosX;
+        public float PosY;
+        public float PosZ;
+        public float RotX;
+        public float RotY;
+        public float RotZ;
+
+        public void Serialize(NetWriter writer)
+        {
+            writer.Put(ItemType ?? string.Empty);
+            writer.Put(PosX);
+            writer.Put(PosY);
+            writer.Put(PosZ);
+            writer.Put(RotX);
+            writer.Put(RotY);
+            writer.Put(RotZ);
+        }
+
+        public static ItemSpawnMessage Deserialize(NetReader reader)
+        {
+            return new ItemSpawnMessage
+            {
+                ItemType = reader.GetString(),
+                PosX = reader.GetFloat(),
+                PosY = reader.GetFloat(),
+                PosZ = reader.GetFloat(),
+                RotX = reader.GetFloat(),
+                RotY = reader.GetFloat(),
+                RotZ = reader.GetFloat()
+            };
+        }
     }
 }

@@ -149,6 +149,16 @@ namespace DarkwoodMultiplayer.Networking
             Send(NetMessageType.PlayerState, w => msg.Serialize(w));
         }
 
+        private void LateUpdate()
+        {
+            if (!ModConfig.IsLanMode) return;
+            if (!IsConnected || !_handshakeComplete) return;
+            // Per-frame entity interpolation runs in LateUpdate to guarantee it fires
+            // AFTER Character.Update (client AI), so position corrections aren't overwritten.
+            Sync.WorldPhysicsSyncService.UpdateEntityInterpolation();
+            Sync.WorldPhysicsSyncService.UpdateObjectInterpolation();
+        }
+
         private void Send(NetMessageType type, Action<NetWriter> writeBody)
         {
             if (_peer == null)
@@ -216,6 +226,12 @@ namespace DarkwoodMultiplayer.Networking
                 case NetMessageType.PhysicsState:
                     HandlePhysicsState(PhysicsStateMessage.Deserialize(new NetReader(payload)));
                     break;
+                case NetMessageType.ItemSpawn:
+                    HandleItemSpawn(ItemSpawnMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.LightState:
+                    HandleLightState(LightStateMessage.Deserialize(new NetReader(payload)));
+                    break;
             }
         }
 
@@ -271,13 +287,42 @@ namespace DarkwoodMultiplayer.Networking
         }
 
         private float _physicsSendTimer;
-        private const float PhysicsSendInterval = 0.15f;
+        private int _physicsRecvLogCounter;
+        private const float PhysicsSendInterval = 0.2f;
 
         public void SendDoorState(DoorState door)
         {
             if (!IsConnected) return;
             var msg = new PhysicsStateMessage { Doors = new[] { door } };
             Send(NetMessageType.PhysicsState, w => msg.Serialize(w));
+        }
+
+        public void SendTrapState(TrapState ts)
+        {
+            if (!IsConnected) return;
+            var msg = new PhysicsStateMessage { Traps = new[] { ts } };
+            ModRuntime.Log?.LogInfo("[TrapSync] sending trap triggered at " + ts.PosX + "," + ts.PosY + "," + ts.PosZ);
+            Send(NetMessageType.PhysicsState, w => msg.Serialize(w));
+        }
+
+        public void SendItemSpawn(ItemSpawnMessage msg)
+        {
+            if (!IsConnected) return;
+            ModRuntime.Log?.LogInfo("[ItemSpawn] sending " + msg.ItemType + " at " + msg.PosX + "," + msg.PosY + "," + msg.PosZ);
+            Send(NetMessageType.ItemSpawn, w => msg.Serialize(w));
+        }
+
+        public void SendGeneratorState(GeneratorState gs)
+        {
+            if (!IsConnected) return;
+            var msg = new PhysicsStateMessage { Generators = new[] { gs } };
+            Send(NetMessageType.PhysicsState, w => msg.Serialize(w));
+        }
+
+        public void SendLightState(LightStateMessage ls)
+        {
+            if (!IsConnected) return;
+            Send(NetMessageType.LightState, w => ls.Serialize(w));
         }
 
         private void SendPhysicsSnapshot()
@@ -292,7 +337,59 @@ namespace DarkwoodMultiplayer.Networking
         private void HandlePhysicsState(PhysicsStateMessage state)
         {
             string fromPeer = (_role == NetworkRole.Host) ? "client" : "host";
+            int ec = state.Entities?.Length ?? 0;
+            int oc = state.Objects?.Length ?? 0;
+            int dc = state.Doors?.Length ?? 0;
+            int tc = state.Traps?.Length ?? 0;
+            int gc = state.Generators?.Length ?? 0;
+            if ((ec > 0 || oc > 0 || dc > 0 || tc > 0 || gc > 0) && ++_physicsRecvLogCounter % 30 == 0)
+                ModRuntime.Log?.LogInfo("[PhysicsRecv] entities=" + ec + " objects=" + oc + " doors=" + dc + " traps=" + tc + " gens=" + gc + " from " + fromPeer);
             Sync.WorldPhysicsSyncService.ApplySnapshot(state, fromPeer);
+        }
+
+        private void HandleItemSpawn(ItemSpawnMessage msg)
+        {
+            string fromPeer = (_role == NetworkRole.Host) ? "client" : "host";
+            ModRuntime.Log?.LogInfo("[ItemSpawn] received " + msg.ItemType + " at " + msg.PosX + "," + msg.PosY + "," + msg.PosZ + " from " + fromPeer);
+
+            if (Singleton<ItemsDatabase>.Instance == null)
+            {
+                ModRuntime.Log?.LogWarning("[ItemSpawn] ItemsDatabase not available");
+                return;
+            }
+
+            if (!Singleton<ItemsDatabase>.Instance.hasItem(msg.ItemType))
+            {
+                ModRuntime.Log?.LogWarning("[ItemSpawn] unknown item type: " + msg.ItemType);
+                return;
+            }
+
+            InvItem itemDef = Singleton<ItemsDatabase>.Instance.getItem(msg.ItemType, instantiate: false);
+            if (itemDef == null || itemDef.item == null)
+            {
+                ModRuntime.Log?.LogWarning("[ItemSpawn] no prefab for " + msg.ItemType);
+                return;
+            }
+
+            Vector3 pos = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
+            Quaternion rot = Quaternion.Euler(msg.RotX, msg.RotY, msg.RotZ);
+            GameObject go = Core.AddPrefab(itemDef.item, pos, rot, null);
+            if (go != null)
+            {
+                Trigger trig = go.GetComponent<Trigger>();
+                if (trig != null)
+                    trig.setByPlayer = true;
+            }
+            else
+            {
+                ModRuntime.Log?.LogWarning("[ItemSpawn] Core.AddPrefab returned null for " + msg.ItemType);
+            }
+        }
+
+        private void HandleLightState(LightStateMessage ls)
+        {
+            string fromPeer = (_role == NetworkRole.Host) ? "client" : "host";
+            Sync.WorldPhysicsSyncService.ApplyLightState(ls, fromPeer);
         }
 
         private void EnsureRemoteProxy()

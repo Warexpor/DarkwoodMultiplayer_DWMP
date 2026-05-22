@@ -7,6 +7,9 @@ namespace DarkwoodMultiplayer.Players
     {
         private static readonly FieldInfo WantToReverseLegsField =
             typeof(Player).GetField("wantToReverseLegs", BindingFlags.Instance | BindingFlags.NonPublic);
+
+        private const float LegAnimThreshold = 55f;
+
         public static SecondPlayerAnimController.LocomotionState ReadLocomotion(Player player)
         {
             if (player == null)
@@ -17,7 +20,7 @@ namespace DarkwoodMultiplayer.Players
 
             Vector3 vel = player.Rigidbody != null ? player.Rigidbody.velocity : Vector3.zero;
             float speed = new Vector2(vel.x, vel.z).magnitude;
-            if (speed >= 0.35f)
+            if (speed >= LegAnimThreshold)
                 return SecondPlayerAnimController.LocomotionState.Walk;
 
             return SecondPlayerAnimController.LocomotionState.Idle;
@@ -65,7 +68,7 @@ namespace DarkwoodMultiplayer.Players
             {
                 Vector3 vel = player.Rigidbody != null ? player.Rigidbody.velocity : Vector3.zero;
                 float speed = new Vector2(vel.x, vel.z).magnitude;
-                if (speed < 0.35f && !player.running)
+                if (speed < LegAnimThreshold && !player.running)
                     return null;
             }
             return clip != null ? clip.name : null;
@@ -80,7 +83,7 @@ namespace DarkwoodMultiplayer.Players
             {
                 Vector3 vel = player.Rigidbody != null ? player.Rigidbody.velocity : Vector3.zero;
                 float speed = new Vector2(vel.x, vel.z).magnitude;
-                if (speed < 0.35f)
+                if (speed < LegAnimThreshold)
                     return null;
             }
 
