@@ -7,7 +7,16 @@ namespace DarkwoodMultiplayer.Networking
         WorldSession = 3,
         PhysicsState = 4,
         ItemSpawn = 5,
-        LightState = 6
+        LightState = 6,
+        EntityState = 7,
+        PlayerAttack = 8,
+        DamagePlayer = 9,
+        PlayerDied = 10,
+        ContainerItem = 11,
+        BarricadeEvent = 12,
+        WorkbenchLevel = 13,
+        JournalItem = 14,
+        FriendlyFire = 15
     }
 
     /// <summary>
@@ -132,6 +141,7 @@ namespace DarkwoodMultiplayer.Networking
         public void Put(bool value) => _inner.Put(value);
         public void Put(string value) => _inner.Put(value ?? string.Empty);
 
+        public void Reset() => _inner.Reset();
         public byte[] CopyData() => _inner.CopyData();
     }
 
@@ -212,5 +222,240 @@ namespace DarkwoodMultiplayer.Networking
                 RotZ = reader.GetFloat()
             };
         }
+    }
+
+    public struct EntitySnapshotNet
+    {
+        public short Index;
+        public float PosX, PosY, PosZ;
+        public float RotY;
+        public string Clip;
+        public short ClipFrame;
+        public bool Alive;
+        public byte HealthPct;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(Index);
+            w.Put(PosX); w.Put(PosY); w.Put(PosZ);
+            w.Put(RotY);
+            w.Put(Clip ?? "");
+            w.Put(ClipFrame);
+            w.Put(Alive);
+            w.Put(HealthPct);
+        }
+
+        public static EntitySnapshotNet Deserialize(NetReader r) => new EntitySnapshotNet
+        {
+            Index = r.GetShort(),
+            PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat(),
+            RotY = r.GetFloat(),
+            Clip = r.GetString(),
+            ClipFrame = r.GetShort(),
+            Alive = r.GetBool(),
+            HealthPct = r.GetByte()
+        };
+    }
+
+    public struct EntityStateMessage
+    {
+        public EntitySnapshotNet[] Entities;
+
+        public void Serialize(NetWriter w)
+        {
+            int count = Entities != null ? Entities.Length : 0;
+            w.Put(count);
+            for (int i = 0; i < count; i++)
+                Entities[i].Serialize(w);
+        }
+
+        public static EntityStateMessage Deserialize(NetReader r)
+        {
+            int count = r.GetInt();
+            var arr = new EntitySnapshotNet[count];
+            for (int i = 0; i < count; i++)
+                arr[i] = EntitySnapshotNet.Deserialize(r);
+            return new EntityStateMessage { Entities = arr };
+        }
+    }
+
+    public struct PlayerAttackMessage
+    {
+        public short TargetNameHash;
+        public int Damage;
+        public float AttackerPosX, AttackerPosY, AttackerPosZ;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(TargetNameHash);
+            w.Put(Damage);
+            w.Put(AttackerPosX); w.Put(AttackerPosY); w.Put(AttackerPosZ);
+        }
+
+        public static PlayerAttackMessage Deserialize(NetReader r) => new PlayerAttackMessage
+        {
+            TargetNameHash = r.GetShort(),
+            Damage = r.GetInt(),
+            AttackerPosX = r.GetFloat(), AttackerPosY = r.GetFloat(), AttackerPosZ = r.GetFloat()
+        };
+    }
+
+    public struct DamagePlayerMessage
+    {
+        public int Damage;
+        public float AttackerPosX, AttackerPosY, AttackerPosZ;
+        public bool CanCutInHalf;
+        public bool ShowRedScreen;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(Damage);
+            w.Put(AttackerPosX); w.Put(AttackerPosY); w.Put(AttackerPosZ);
+            w.Put(CanCutInHalf);
+            w.Put(ShowRedScreen);
+        }
+
+        public static DamagePlayerMessage Deserialize(NetReader r) => new DamagePlayerMessage
+        {
+            Damage = r.GetInt(),
+            AttackerPosX = r.GetFloat(), AttackerPosY = r.GetFloat(), AttackerPosZ = r.GetFloat(),
+            CanCutInHalf = r.GetBool(),
+            ShowRedScreen = r.GetBool()
+        };
+    }
+
+    public struct PlayerDiedMessage
+    {
+        public void Serialize(NetWriter w) { }
+        public static PlayerDiedMessage Deserialize(NetReader r) => new PlayerDiedMessage();
+    }
+
+    public enum ContainerAction : byte
+    {
+        TakeItem = 0,
+        PlaceItem = 1,
+        RemoveItem = 2
+    }
+
+    public struct ContainerItemMessage
+    {
+        public float PosX, PosY, PosZ;
+        public ContainerAction Action;
+        public byte SlotIndex;
+        public string ItemType;
+        public int Amount;
+        public float Durability;
+        public int Ammo;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(PosX); w.Put(PosY); w.Put(PosZ);
+            w.Put((byte)Action);
+            w.Put(SlotIndex);
+            w.Put(ItemType ?? "");
+            w.Put(Amount);
+            w.Put(Durability);
+            w.Put(Ammo);
+        }
+
+        public static ContainerItemMessage Deserialize(NetReader r) => new ContainerItemMessage
+        {
+            PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat(),
+            Action = (ContainerAction)r.GetByte(),
+            SlotIndex = r.GetByte(),
+            ItemType = r.GetString(),
+            Amount = r.GetInt(),
+            Durability = r.GetFloat(),
+            Ammo = r.GetInt()
+        };
+    }
+
+    public enum BarricadeAction : byte
+    {
+        Built = 0,
+        Destroyed = 1,
+        Damaged = 2
+    }
+
+    public struct BarricadeEventMessage
+    {
+        public float PosX, PosY, PosZ;
+        public byte IsWindow; // 0 = door, 1 = window
+        public BarricadeAction Action;
+        public int Health;
+        public bool PlayerBarricade;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(PosX); w.Put(PosY); w.Put(PosZ);
+            w.Put(IsWindow);
+            w.Put((byte)Action);
+            w.Put(Health);
+            w.Put(PlayerBarricade);
+        }
+
+        public static BarricadeEventMessage Deserialize(NetReader r) => new BarricadeEventMessage
+        {
+            PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat(),
+            IsWindow = r.GetByte(),
+            Action = (BarricadeAction)r.GetByte(),
+            Health = r.GetInt(),
+            PlayerBarricade = r.GetBool()
+        };
+    }
+
+    public struct WorkbenchLevelMessage
+    {
+        public int Level;
+
+        public void Serialize(NetWriter w) => w.Put(Level);
+        public static WorkbenchLevelMessage Deserialize(NetReader r) => new WorkbenchLevelMessage { Level = r.GetInt() };
+    }
+
+    public enum JournalItemKind : byte
+    {
+        Note = 0,
+        Key = 1,
+        QuestItem = 2,
+        JournalEntry = 3
+    }
+
+    public struct JournalItemMessage
+    {
+        public JournalItemKind Kind;
+        public string Type;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put((byte)Kind);
+            w.Put(Type ?? "");
+        }
+
+        public static JournalItemMessage Deserialize(NetReader r) => new JournalItemMessage
+        {
+            Kind = (JournalItemKind)r.GetByte(),
+            Type = r.GetString()
+        };
+    }
+
+    public struct FriendlyFireMessage
+    {
+        public int Damage;
+        public float AttackerPosX, AttackerPosY, AttackerPosZ;
+        public bool CanCutInHalf;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(Damage);
+            w.Put(AttackerPosX); w.Put(AttackerPosY); w.Put(AttackerPosZ);
+            w.Put(CanCutInHalf);
+        }
+
+        public static FriendlyFireMessage Deserialize(NetReader r) => new FriendlyFireMessage
+        {
+            Damage = r.GetInt(),
+            AttackerPosX = r.GetFloat(), AttackerPosY = r.GetFloat(), AttackerPosZ = r.GetFloat(),
+            CanCutInHalf = r.GetBool()
+        };
     }
 }

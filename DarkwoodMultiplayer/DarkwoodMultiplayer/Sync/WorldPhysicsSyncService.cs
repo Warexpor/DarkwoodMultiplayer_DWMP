@@ -18,47 +18,16 @@ namespace DarkwoodMultiplayer.Sync
         private static readonly Dictionary<Vector3, bool> _lastDoorOpen = new Dictionary<Vector3, bool>();
         private static readonly Dictionary<Vector3, bool> _lastTrapTriggered = new Dictionary<Vector3, bool>();
 
-        private static int _sendLogCounter;
         private static int _objApplyLogCounter;
-        private static int _entityRecvLogCounter;
         private static float _objInterpLastLogTime;
         private static float _scanRadius = 40f;
         private static readonly Dictionary<int, GameObject> _knownTraps = new Dictionary<int, GameObject>();
         private static readonly Dictionary<int, bool> _trapResultCache = new Dictionary<int, bool>();
-        private static Door[] _cachedDoors;
-        private static float _lastDoorScanTime;
-        private const float DoorScanInterval = 3f;
-
-        private static readonly List<EntitySnapshot> _entities = new List<EntitySnapshot>();
-        // Tracks dead entities already sent (map from InstanceID to Vector3.zero marker)
-        private static readonly Dictionary<int, Vector3> _entityDeadSent = new Dictionary<int, Vector3>();
-        private static bool _entitiesInRange;
-        private const float EntityScanRadius = 500f;
-
 
         private static readonly List<GeneratorState> _generators = new List<GeneratorState>();
         private static readonly Dictionary<Vector3, bool> _lastGeneratorOn = new Dictionary<Vector3, bool>();
-        private static Generator[] _cachedGenerators;
-        private static float _lastElectricityScanTime;
-        private const float ElectricityScanInterval = 3f;
 
-        /// How long a single interpolated move should take. Slightly longer than
-        /// the snapshot interval (~0.2s) so transitions overlap smoothly.
         private const float InterpFixedDuration = 0.25f;
-
-        // Client-side per-frame entity interpolation (prevents AI tug-of-war)
-        private struct EntityInterpState
-        {
-            public Vector3 PrevPos;
-            public float PrevTime;
-            public Vector3 TargetPos;
-            public float TargetTime;
-            public float TargetRotY;
-            public string Clip;
-            public short ClipFrame;
-        }
-        private static readonly Dictionary<int, EntityInterpState> _entityInterp = new Dictionary<int, EntityInterpState>();
-        private static readonly List<int> _interpDeadKeys = new List<int>();
 
         // Client-side per-frame object interpolation (smooth movement for physics objects)
         private struct ObjectInterpState
@@ -76,14 +45,7 @@ namespace DarkwoodMultiplayer.Sync
 
 
 
-        // Apply-path caches (avoid per-entity FindObjectsOfType in ApplySnapshot)
-        private static Door[] _cachedDoorsApply;
-        private static float _lastDoorApplyTime;
-        private static Generator[] _cachedGeneratorsApply;
-        private static float _lastGeneratorApplyTime;
-        private const float ApplyCacheDuration = 2f;
-
-        public static bool TryBuildSnapshot(out PhysicsStateMessage msg)
+        public static bool TryBuildWorldSnapshot(out PhysicsStateMessage msg)
         {
             msg = default;
             Player local = Player.Instance;
@@ -97,17 +59,14 @@ namespace DarkwoodMultiplayer.Sync
             _doors.Clear();
             _traps.Clear();
             _generators.Clear();
-            _entitiesInRange = false;
 
             int skippedPlayer = 0, skippedDoor = 0, skippedTrigger = 0, skippedStatic = 0, skippedNoRb = 0;
-            int includedObjects = 0;
 
             for (int i = 0; i < hitCount && i < _overlap3D.Length; i++)
             {
                 Collider col = _overlap3D[i];
                 if (col == null) { continue; }
 
-                // Detect traps even for trigger colliders
                 if (col.isTrigger)
                 {
                     DetectTrap(col);
@@ -143,25 +102,18 @@ namespace DarkwoodMultiplayer.Sync
                 }
 
                 float distSq = Vector3.SqrMagnitude(pos - last);
-                bool moved = distSq >= 0.0009f; // ~3 cm
+                bool moved = distSq >= 0.0009f;
                 if (!moved)
                 {
-                    // Still send the last-known position for up to 1s after movement stops
-                    // so the remote side gets the final resting place.
                     if (_lastMoveTime.TryGetValue(trackingKey, out float lastMoved) && (Time.time - lastMoved) < 2.5f)
-                    {
                         moved = true;
-                    }
                 }
                 if (!moved)
                     continue;
 
                 _lastPos[trackingKey] = pos;
                 _lastMoveTime[trackingKey] = Time.time;
-                includedObjects++;
 
-                // Local physics is now driving this object — remove any stale
-                // interpolation entry so UpdateObjectInterpolation doesn't fight it.
                 _objectInterp.Remove(rootId);
 
                 if (_objects.Count >= 128) break;
@@ -171,26 +123,18 @@ namespace DarkwoodMultiplayer.Sync
 
             SyncDoors();
             SyncTraps();
-            SyncEntities();
             SyncGenerators();
 
-            // Always send if entities are in range (enables entity heartbeat)
-            if (!_entitiesInRange && _objects.Count == 0 && _doors.Count == 0 && _traps.Count == 0 && _entities.Count == 0 && _generators.Count == 0)
-            {
+            if (_objects.Count == 0 && _doors.Count == 0 && _traps.Count == 0 && _generators.Count == 0)
                 return false;
-            }
 
             msg = new PhysicsStateMessage
             {
                 Objects = _objects.ToArray(),
                 Doors = _doors.ToArray(),
                 Traps = _traps.ToArray(),
-                Entities = _entities.ToArray(),
                 Generators = _generators.ToArray()
             };
-            if (++_sendLogCounter % 30 == 0)
-                ModRuntime.Log?.LogInfo("[SendSnapshot] objects=" + _objects.Count + " doors=" + _doors.Count
-                    + " traps=" + _traps.Count + " entities=" + _entities.Count + " gens=" + _generators.Count);
             return true;
         }
 
@@ -199,22 +143,16 @@ namespace DarkwoodMultiplayer.Sync
             if (ModRuntime.Network == null || ModRuntime.Network.Role != NetworkRole.Host)
                 return;
 
-            float now = Time.time;
-            if (now - _lastDoorScanTime >= DoorScanInterval)
-            {
-                _cachedDoors = UnityEngine.Object.FindObjectsOfType<Door>();
-                _lastDoorScanTime = now;
-            }
-
-            if (_cachedDoors == null) return;
+            DoorTracker.Cleanup();
 
             Player local = Player.Instance;
             if (local == null) return;
             Vector3 center = local.transform.position;
 
-            for (int i = 0; i < _cachedDoors.Length; i++)
+            IList<Door> allDoors = DoorTracker.GetAll();
+            for (int i = 0; i < allDoors.Count; i++)
             {
-                Door door = _cachedDoors[i];
+                Door door = allDoors[i];
                 if (door == null) continue;
 
                 float dist = Vector3.Distance(door.transform.position, center);
@@ -271,98 +209,19 @@ namespace DarkwoodMultiplayer.Sync
                 }
             }
         }
-        private static void SyncEntities()
-        {
-            // Host only: host is authority for all entity state.
-            if (ModRuntime.Network == null || ModRuntime.Network.Role != NetworkRole.Host)
-                return;
-
-            _entities.Clear();
-
-            Player local = Player.Instance;
-            if (local == null) return;
-            Vector3 center = local.transform.position;
-
-            Character[] all = CharacterTracker.GetAll();
-
-            int aliveInRange = 0, sentCount = 0, suppressedDead = 0;
-            for (int idx = 0; idx < all.Length; idx++)
-            {
-                Character c = all[idx];
-                if (c == null) continue;
-                if (c.name.Contains("RemotePlayer")) continue;
-                float dist = Vector3.Distance(c.transform.position, center);
-                if (dist > EntityScanRadius)
-                    continue;
-
-                _entitiesInRange = true;
-
-                if (_entities.Count >= 32) break;
-                int id = c.GetInstanceID();
-                string name = c.name;
-                Vector3 pos = c.transform.position;
-                Vector3 rot = c.transform.eulerAngles;
-
-                tk2dSpriteAnimator anim = c.GetComponent<tk2dSpriteAnimator>();
-                string clip = (anim != null && anim.CurrentClip != null) ? anim.CurrentClip.name : "";
-                byte hp = (byte)Mathf.Clamp((c.Health / Mathf.Max(c.maxHealth, 1f)) * 100f, 0, 100);
-                bool aliveNow = c.alive;
-                aliveInRange++;
-                short clipFrame = anim != null && anim.CurrentClip != null ? (short)anim.CurrentFrame : (short)-1;
-
-                // Dead entity: send once, then suppress
-                if (!aliveNow)
-                {
-                    if (_entityDeadSent.ContainsKey(id))
-                    {
-                        suppressedDead++;
-                        continue;
-                    }
-                    _entityDeadSent[id] = Vector3.zero;
-                    _entities.Add(new EntitySnapshot
-                    {
-                        PosX = pos.x, PosY = pos.y, PosZ = pos.z,
-                        RotY = rot.y, Name = name, Clip = clip,
-                        ClipFrame = clipFrame,
-                        Alive = false, HealthPct = hp,
-                        Index = (short)idx
-                    });
-                    sentCount++;
-                    continue;
-                }
-
-                // Always send alive entities (no change tracking)
-                _entities.Add(new EntitySnapshot
-                {
-                    PosX = pos.x, PosY = pos.y, PosZ = pos.z,
-                    RotY = rot.y, Name = name, Clip = clip,
-                    ClipFrame = clipFrame,
-                    Alive = true, HealthPct = hp,
-                    Index = (short)idx
-                });
-                sentCount++;
-            }
-
-            if (sentCount > 0 && _sendLogCounter % 30 == 0)
-                ModRuntime.Log?.LogInfo("[EntitySync] aliveInRange=" + aliveInRange + " sent=" + sentCount + " deadSuppressed=" + suppressedDead);
-        }
-
         private static void SyncGenerators()
         {
             if (ModRuntime.Network == null || ModRuntime.Network.Role != NetworkRole.Host)
                 return;
 
-            RefreshElectricityCache();
-
-            if (_cachedGenerators == null) return;
-
             Player local = Player.Instance;
             if (local == null) return;
             Vector3 center = local.transform.position;
 
-            for (int i = 0; i < _cachedGenerators.Length; i++)
+            IList<Generator> allGens = GeneratorTracker.GetAll();
+            for (int i = 0; i < allGens.Count; i++)
             {
-                Generator gen = _cachedGenerators[i];
+                Generator gen = allGens[i];
                 if (gen == null) continue;
 
                 float dist = Vector3.Distance(gen.transform.position, center);
@@ -383,16 +242,6 @@ namespace DarkwoodMultiplayer.Sync
                             IsOn = isOn, Fuel = gen.fuel
                         });
                 }
-            }
-        }
-
-        private static void RefreshElectricityCache()
-        {
-            float now = Time.time;
-            if (now - _lastElectricityScanTime >= ElectricityScanInterval)
-            {
-                _cachedGenerators = UnityEngine.Object.FindObjectsOfType<Generator>();
-                _lastElectricityScanTime = now;
             }
         }
 
@@ -605,39 +454,6 @@ namespace DarkwoodMultiplayer.Sync
                     ModRuntime.Log?.LogInfo("[TrapRecv] applied=" + trapApplied + " skipped=" + trapSkipped + " from " + fromPeer);
             }
 
-            if (state.Entities != null)
-            {
-                int entityApplied = 0, entitySkipped = 0;
-                try
-                {
-                    bool isHost = ModRuntime.Network != null && ModRuntime.Network.Role == NetworkRole.Host;
-
-                    foreach (EntitySnapshot es in state.Entities)
-                    {
-                        Vector3 ePos = new Vector3(es.PosX, es.PosY, es.PosZ);
-                        Character c = FindCharacterByNamePos(es.Name, ePos, es.Index);
-                        if (c == null)
-                        {
-                            entitySkipped++;
-                            continue;
-                        }
-
-                        // Host receives client's player state, not entity snapshots (host is authority).
-                        // Client always applies host positions with lerp.
-                        bool applyPos = !isHost;
-
-                        ApplyEntityState(c, es, applyPos);
-                        entityApplied++;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    ModRuntime.Log?.LogError("[EntityApply] Exception: " + ex);
-                }
-                if (entityApplied > 0 && ++_entityRecvLogCounter % 30 == 0)
-                    ModRuntime.Log?.LogInfo("[EntityRecv] applied=" + entityApplied + " skipped=" + entitySkipped + " from " + fromPeer);
-            }
-
             if (state.Generators != null)
             {
                 foreach (GeneratorState gs in state.Generators)
@@ -649,6 +465,43 @@ namespace DarkwoodMultiplayer.Sync
                     ApplyGeneratorState(gen, gs.IsOn, gs.Fuel);
                 }
             }
+        }
+
+        private static void SetObjectTarget(GameObject go, Vector3 targetPos, Vector3 targetRot)
+        {
+            int id = go.GetInstanceID();
+            float now = Time.time;
+
+            if (_objectInterp.TryGetValue(id, out var state))
+            {
+                float dur = state.TargetTime - state.PrevTime;
+                if (dur > 0.001f)
+                {
+                    float t = Mathf.Clamp01((now - state.PrevTime) / dur);
+                    state.PrevPos = Vector3.Lerp(state.PrevPos, state.TargetPos, t);
+                    Quaternion prevRotQ = Quaternion.Euler(state.PrevRot);
+                    Quaternion targetRotQ = Quaternion.Euler(state.TargetRot);
+                    state.PrevRot = Quaternion.Slerp(prevRotQ, targetRotQ, t).eulerAngles;
+                }
+                else
+                {
+                    state.PrevPos = state.TargetPos;
+                    state.PrevRot = state.TargetRot;
+                }
+            }
+            else
+            {
+                state.Target = go;
+                state.PrevPos = go.transform.position;
+                state.PrevRot = go.transform.eulerAngles;
+            }
+
+            state.Target = go;
+            state.TargetPos = targetPos;
+            state.TargetRot = targetRot;
+            state.PrevTime = now;
+            state.TargetTime = now + InterpFixedDuration;
+            _objectInterp[id] = state;
         }
 
         private static GameObject FindTrapByPos(Vector3 pos)
@@ -785,282 +638,14 @@ namespace DarkwoodMultiplayer.Sync
 
         private static Door FindDoorByPos(Vector3 pos)
         {
-            Door[] all = GetCachedDoorsApply();
-            foreach (Door d in all)
-            {
-                if (d == null) continue;
-                float dist = Vector3.Distance(d.transform.position, pos);
-                if (dist < 0.5f) return d;
-            }
-            return null;
+            return DoorTracker.FindByPosition(pos);
         }
 
-        private static Door[] GetCachedDoorsApply()
+        private static Generator FindGeneratorByPos(Vector3 pos)
         {
-            float now = Time.time;
-            if (_cachedDoorsApply == null || now - _lastDoorApplyTime > ApplyCacheDuration)
-            {
-                _cachedDoorsApply = UnityEngine.Object.FindObjectsOfType<Door>();
-                _lastDoorApplyTime = now;
-            }
-            return _cachedDoorsApply;
+            return GeneratorTracker.FindByPosition(pos);
         }
 
-        private static Generator[] GetCachedGeneratorsApply()
-        {
-            float now = Time.time;
-            if (_cachedGeneratorsApply == null || now - _lastGeneratorApplyTime > ApplyCacheDuration)
-            {
-                _cachedGeneratorsApply = UnityEngine.Object.FindObjectsOfType<Generator>();
-                _lastGeneratorApplyTime = now;
-            }
-            return _cachedGeneratorsApply;
-        }
-
-        private static Character FindCharacterByNamePos(string name, Vector3 pos, short index = -1)
-        {
-            if (string.IsNullOrEmpty(name)) return null;
-
-            Character[] all = CharacterTracker.GetAll();
-
-            // Phase 1: match by CharacterTracker index (deterministic — same save file order).
-            if (index >= 0 && index < all.Length)
-            {
-                Character c = all[index];
-                if (c != null && !c.name.Contains("RemotePlayer") && c.name.Equals(name, StringComparison.OrdinalIgnoreCase))
-                {
-                    return c;
-                }
-            }
-
-            // Phase 2: name + position (80m radius)
-            Character best = null;
-            float bestDist = EntityScanRadius;
-            int candidates = 0;
-            foreach (Character c in all)
-            {
-                if (c == null) continue;
-                if (c.name.Contains("RemotePlayer")) continue;
-                bool nameMatch = c.name.Equals(name, StringComparison.OrdinalIgnoreCase)
-                    || c.name.StartsWith(name, StringComparison.OrdinalIgnoreCase)
-                    || name.StartsWith(c.name, StringComparison.OrdinalIgnoreCase);
-                if (!nameMatch) continue;
-                candidates++;
-                float d = Vector3.Distance(c.transform.position, pos);
-                if (d < bestDist)
-                {
-                    bestDist = d;
-                    best = c;
-                }
-            }
-
-            if (best != null)
-                return best;
-
-            // Phase 3: name-only for unique names (avoids wrong-match on duplicates like 3×"Dog")
-            Character nameOnlyMatch = null;
-            int nameOnlyCount = 0;
-            foreach (Character c in all)
-            {
-                if (c == null) continue;
-                if (c.name.Contains("RemotePlayer")) continue;
-                if (!c.name.Equals(name, StringComparison.OrdinalIgnoreCase)) continue;
-                nameOnlyCount++;
-                nameOnlyMatch = c;
-            }
-
-            if (nameOnlyCount == 1 && nameOnlyMatch != null)
-                return nameOnlyMatch;
-
-            ModRuntime.Log?.LogWarning("[EntityMatch] FAILED to find " + name + " (index=" + index + ", name-only=" + nameOnlyCount + ") — total chars: " + all.Length);
-            return null;
-        }
-
-        /// <summary>
-        /// Called when a snapshot is received. Stores interpolation keyframe and
-        /// applies immediate state (death). Position and animation are applied
-        /// per-frame via UpdateEntityInterpolation (LateUpdate) to override client AI.
-        /// </summary>
-        private static void ApplyEntityState(Character c, EntitySnapshot es, bool applyPos)
-        {
-            Vector3 targetPos = new Vector3(es.PosX, es.PosY, es.PosZ);
-            float dist = Vector3.Distance(c.transform.position, targetPos);
-
-            // Store interpolation target + clip for per-frame LateUpdate application
-            if (applyPos)
-                SetEntityTarget(c, targetPos, es.RotY, es.Clip, es.ClipFrame);
-
-            // Rotation — set immediately too for responsiveness
-            Vector3 euler = c.transform.eulerAngles;
-            euler.y = es.RotY;
-            c.transform.eulerAngles = euler;
-
-            // Death — must happen immediately (not lerpable)
-            bool didKill = false;
-            if (!es.Alive && c.alive)
-            {
-                c.die();
-                didKill = true;
-            }
-
-            if (dist > 0.5f || didKill)
-                ModRuntime.Log?.LogInfo("[EntityApply] " + es.Name
-                    + " applyPos=" + applyPos
-                    + " dist=" + dist.ToString("F1")
-                    + " die=" + didKill
-                    + " hp=" + es.HealthPct);
-        }
-
-        /// <summary>
-        /// Records a new interpolation keyframe for a character known to the client.
-        /// Stores clip info so per-frame LateUpdate can override client AI animation.
-        /// </summary>
-        private static void SetEntityTarget(Character c, Vector3 targetPos, float rotY, string clip = null, short clipFrame = -1)
-        {
-            int id = c.GetInstanceID();
-            float now = Time.time;
-
-            if (_entityInterp.TryGetValue(id, out var state))
-            {
-                state.PrevPos = state.TargetPos;
-                state.PrevTime = state.TargetTime;
-            }
-            else
-            {
-                state.PrevPos = c.transform.position;
-                state.PrevTime = now;
-            }
-
-            state.TargetPos = targetPos;
-            state.TargetTime = now;
-            state.TargetRotY = rotY;
-            state.Clip = clip;
-            state.ClipFrame = clipFrame;
-            _entityInterp[id] = state;
-        }
-
-        /// <summary>
-        /// Records a new interpolation keyframe for a physics object known to the client.
-        /// </summary>
-        private static void SetObjectTarget(GameObject go, Vector3 targetPos, Vector3 targetRot)
-        {
-            int id = go.GetInstanceID();
-            float now = Time.time;
-
-            if (_objectInterp.TryGetValue(id, out var state))
-            {
-                // Compute current interpolated visual position as new PrevPos
-                // so the next interpolation seamlessly continues from where we are,
-                // avoiding a snap to the old full-TargetPos.
-                float dur = state.TargetTime - state.PrevTime;
-                if (dur > 0.001f)
-                {
-                    float t = Mathf.Clamp01((now - state.PrevTime) / dur);
-                    state.PrevPos = Vector3.Lerp(state.PrevPos, state.TargetPos, t);
-                    Quaternion prevRotQ = Quaternion.Euler(state.PrevRot);
-                    Quaternion targetRotQ = Quaternion.Euler(state.TargetRot);
-                    state.PrevRot = Quaternion.Slerp(prevRotQ, targetRotQ, t).eulerAngles;
-                }
-                else
-                {
-                    state.PrevPos = state.TargetPos;
-                    state.PrevRot = state.TargetRot;
-                }
-            }
-            else
-            {
-                state.Target = go;
-                state.PrevPos = go.transform.position;
-                state.PrevRot = go.transform.eulerAngles;
-            }
-
-            // Always set in case the go changed (e.g. scene reload)
-            state.Target = go;
-            state.TargetPos = targetPos;
-            state.TargetRot = targetRot;
-            state.PrevTime = now;
-            state.TargetTime = now + InterpFixedDuration;
-            _objectInterp[id] = state;
-        }
-
-        /// <summary>
-        /// Called every frame on the client. Interpolates entity positions between the
-        /// previous and latest host snapshot, overriding any client-AI movement.
-        /// </summary>
-        public static void UpdateEntityInterpolation()
-        {
-            if (ModRuntime.Network == null || ModRuntime.Network.Role == NetworkRole.Host)
-                return;
-
-            _interpDeadKeys.Clear();
-            float now = Time.time;
-
-            foreach (var kvp in _entityInterp)
-            {
-                var s = kvp.Value;
-
-                // Remove stale entries (no snapshot for >1.5s)
-                if (now - s.TargetTime > 1.5f)
-                {
-                    _interpDeadKeys.Add(kvp.Key);
-                    continue;
-                }
-
-                Character c = null;
-                Character[] all = CharacterTracker.GetAll();
-                for (int i = 0; i < all.Length; i++)
-                {
-                    if (all[i] != null && all[i].GetInstanceID() == kvp.Key)
-                    {
-                        c = all[i];
-                        break;
-                    }
-                }
-                if (c == null || !c.alive)
-                {
-                    _interpDeadKeys.Add(kvp.Key);
-                    continue;
-                }
-
-                // Compute interpolation factor between prev and target snapshots
-                float duration = s.TargetTime - s.PrevTime;
-                float elapsed = now - s.PrevTime;
-                float t = duration > 0.001f ? Mathf.Clamp01(elapsed / duration) : 1f;
-
-                c.transform.position = Vector3.Lerp(s.PrevPos, s.TargetPos, t);
-
-                Vector3 euler = c.transform.eulerAngles;
-                euler.y = s.TargetRotY;
-                c.transform.eulerAngles = euler;
-
-                // Animation — apply every frame in LateUpdate to override client AI
-                if (!string.IsNullOrEmpty(s.Clip))
-                {
-                    tk2dSpriteAnimator anim = c.GetComponent<tk2dSpriteAnimator>();
-                    if (anim != null)
-                    {
-                        bool clipChanged = anim.CurrentClip == null || anim.CurrentClip.name != s.Clip;
-                        if (clipChanged && anim.GetClipByName(s.Clip) != null)
-                            anim.Play(s.Clip);
-
-                        if (s.ClipFrame >= 0 && anim.CurrentClip != null)
-                        {
-                            int maxFrame = anim.CurrentClip.frames.Length - 1;
-                            if (maxFrame >= 0)
-                                anim.SetFrame(Mathf.Clamp(s.ClipFrame, 0, maxFrame), false);
-                        }
-                    }
-                }
-            }
-
-            foreach (int key in _interpDeadKeys)
-                _entityInterp.Remove(key);
-        }
-
-        /// <summary>
-        /// Called every frame on the client. Interpolates physics object transforms
-        /// between the most recent host snapshots for smooth visual movement.
-        /// </summary>
         public static void UpdateObjectInterpolation()
         {
             if (ModRuntime.Network == null)
@@ -1125,18 +710,6 @@ namespace DarkwoodMultiplayer.Sync
 
             foreach (int key in _objectInterpDeadKeys)
                 _objectInterp.Remove(key);
-        }
-
-        private static Generator FindGeneratorByPos(Vector3 pos)
-        {
-            Generator[] all = GetCachedGeneratorsApply();
-            foreach (Generator g in all)
-            {
-                if (g == null) continue;
-                float dist = Vector3.Distance(g.transform.position, pos);
-                if (dist < 0.5f) return g;
-            }
-            return null;
         }
 
         private static void ApplyGeneratorState(Generator gen, bool isOn, float fuel)
@@ -1208,11 +781,9 @@ namespace DarkwoodMultiplayer.Sync
             _knownTraps.Clear();
             _trapResultCache.Clear();
             _lastGeneratorOn.Clear();
-            _entityDeadSent.Clear();
-            _entityInterp.Clear();
             _objectInterp.Clear();
-            _cachedDoorsApply = null;
-            _cachedGeneratorsApply = null;
+            DoorTracker.Clear();
+            GeneratorTracker.Clear();
             CharacterTracker.Clear();
         }
     }
@@ -1272,33 +843,6 @@ namespace DarkwoodMultiplayer.Sync
         };
     }
 
-    public struct EntitySnapshot
-    {
-        public float PosX, PosY, PosZ;
-        public float RotY;
-        public string Name;
-        public string Clip;
-        public short ClipFrame; // current frame index of the animation clip (-1 if no anim)
-        public bool Alive;
-        public byte HealthPct;
-        public short Index; // index in CharacterTracker list (deterministic across host/client)
-
-        public void Serialize(NetWriter w)
-        {
-            w.Put(PosX); w.Put(PosY); w.Put(PosZ); w.Put(RotY);
-            w.Put(Name ?? ""); w.Put(Clip ?? "");
-            w.Put(ClipFrame); w.Put(Alive); w.Put(HealthPct); w.Put(Index);
-        }
-        public static EntitySnapshot Deserialize(NetReader r) => new EntitySnapshot
-        {
-            PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat(),
-            RotY = r.GetFloat(),
-            Name = r.GetString(), Clip = r.GetString(),
-            ClipFrame = r.GetShort(), Alive = r.GetBool(), HealthPct = r.GetByte(),
-            Index = r.GetShort()
-        };
-    }
-
     public struct GeneratorState
     {
         public float PosX, PosY, PosZ;
@@ -1322,7 +866,6 @@ namespace DarkwoodMultiplayer.Sync
         public WorldObjectState[] Objects;
         public DoorState[] Doors;
         public TrapState[] Traps;
-        public EntitySnapshot[] Entities;
         public GeneratorState[] Generators;
 
         public void Serialize(NetWriter w)
@@ -1338,10 +881,6 @@ namespace DarkwoodMultiplayer.Sync
             int tc = Traps != null ? Traps.Length : 0;
             w.Put(tc);
             for (int i = 0; i < tc; i++) Traps[i].Serialize(w);
-
-            int ec = Entities != null ? Entities.Length : 0;
-            w.Put(ec);
-            for (int i = 0; i < ec; i++) Entities[i].Serialize(w);
 
             int gc = Generators != null ? Generators.Length : 0;
             w.Put(gc);
@@ -1362,18 +901,13 @@ namespace DarkwoodMultiplayer.Sync
             var traps = new TrapState[tc];
             for (int i = 0; i < tc; i++) traps[i] = TrapState.Deserialize(r);
 
-            int ec = r.GetInt();
-            var entities = new EntitySnapshot[ec];
-            for (int i = 0; i < ec; i++) entities[i] = EntitySnapshot.Deserialize(r);
-
             int gc = r.GetInt();
             var generators = new GeneratorState[gc];
             for (int i = 0; i < gc; i++) generators[i] = GeneratorState.Deserialize(r);
 
             return new PhysicsStateMessage
             {
-                Objects = objs, Doors = doors, Traps = traps, Entities = entities,
-                Generators = generators
+                Objects = objs, Doors = doors, Traps = traps, Generators = generators
             };
         }
     }

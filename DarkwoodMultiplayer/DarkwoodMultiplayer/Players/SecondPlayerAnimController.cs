@@ -3,9 +3,6 @@ using UnityEngine;
 
 namespace DarkwoodMultiplayer.Players
 {
-    /// <summary>
-    /// Drives Darkwood's split torso + PlayerLegs animators (same clips as Player.ProcessAnims).
-    /// </summary>
     public sealed class SecondPlayerAnimController : MonoBehaviour
     {
         public enum LocomotionState : byte
@@ -22,7 +19,6 @@ namespace DarkwoodMultiplayer.Players
         private tk2dBaseSprite _torsoSprite;
 
         private string _currentTorsoClip;
-        private string _currentLegsClip;
         private LocomotionState _state = LocomotionState.Idle;
         private bool _flipX;
         private short _networkLegFacingY;
@@ -45,6 +41,9 @@ namespace DarkwoodMultiplayer.Players
                 Renderer legsRenderer = legsTransform.GetComponent<Renderer>();
                 if (legsRenderer != null)
                     legsRenderer.enabled = true;
+
+                if (_legsAnimator != null)
+                    _legsAnimator.AnimationEventTriggered += OnLegsAnimationEvent;
             }
 
             if (_torsoAnimator == null)
@@ -56,28 +55,22 @@ namespace DarkwoodMultiplayer.Players
                 ModRuntime.Log?.LogInfo("SecondPlayerAnimController: torso + legs animators ready.");
         }
 
-        private float _idleTime;
+        private void OnLegsAnimationEvent(tk2dSpriteAnimator animator, tk2dSpriteAnimationClip clip, int frameNum)
+        {
+            if (_state != LocomotionState.Idle)
+                return;
+
+            if (clip.GetFrame(frameNum).eventInfo == "FeetNeutral")
+            {
+                _legsAnimator?.Stop();
+            }
+        }
 
         private void LateUpdate()
         {
-            if (_state == LocomotionState.Idle)
+            if (_state == LocomotionState.Idle && _legsAnimator != null)
             {
                 ResetLegsToStanding();
-                _idleTime += Time.deltaTime;
-                if (_idleTime > 0.15f && _currentLegsClip != null)
-                {
-                    if (_legsAnimator != null)
-                    {
-                        _legsAnimator.Stop();
-                        if (_legsAnimator.CurrentClip != null)
-                            _legsAnimator.SetFrame(0, false);
-                    }
-                    _currentLegsClip = null;
-                }
-            }
-            else
-            {
-                _idleTime = 0f;
             }
         }
 
@@ -101,7 +94,9 @@ namespace DarkwoodMultiplayer.Players
             if (flipX != _flipX)
                 SetFlipX(flipX);
 
+            bool wasMoving = _state == LocomotionState.Walk || _state == LocomotionState.Run;
             _state = state;
+            bool isMoving = state == LocomotionState.Walk || state == LocomotionState.Run;
 
             if (!string.IsNullOrEmpty(torsoClip))
                 PlayTorso(torsoClip);
@@ -111,15 +106,20 @@ namespace DarkwoodMultiplayer.Players
                 ApplyLocomotion(state, Vector3.zero, legFacingY, reverseLegs);
 
             if (!string.IsNullOrEmpty(legsClip))
-                PlayLegs(legsClip);
-            else if (state == LocomotionState.Idle)
             {
-                // Let LateUpdate handle the stop after a delay
+                PlayLegs(legsClip);
             }
             else if (state == LocomotionState.Walk)
+            {
                 PlayLegs(reverseLegs ? "LegsWalkReverse" : "LegsWalk");
+            }
             else if (state == LocomotionState.Run)
+            {
                 PlayLegs("LegsRun");
+            }
+            else if (wasMoving && !isMoving && _legsAnimator != null && _legsAnimator.Playing)
+            {
+            }
 
             if (state == LocomotionState.Walk)
                 AlignLegsToFacing(legFacingY, snapRunToBody: false);
@@ -159,7 +159,6 @@ namespace DarkwoodMultiplayer.Players
 
                 default:
                     PlayTorso("Idle");
-                    StopLegs();
                     break;
             }
         }
@@ -219,11 +218,10 @@ namespace DarkwoodMultiplayer.Players
                     return;
             }
 
-            if (clipName == _currentLegsClip)
+            if (_legsAnimator.Playing && _legsAnimator.CurrentClip != null && _legsAnimator.CurrentClip.name == clipName)
                 return;
 
             _legsAnimator.Play(clipName);
-            _currentLegsClip = clipName;
         }
 
         private void StopTorso()
@@ -232,15 +230,6 @@ namespace DarkwoodMultiplayer.Players
                 return;
             _torsoAnimator.Stop();
             _currentTorsoClip = null;
-        }
-
-        private void StopLegs()
-        {
-            if (_legsAnimator == null)
-                return;
-
-            _legsAnimator.Stop();
-            _currentLegsClip = null;
         }
 
         private void SetFlipX(bool flip)

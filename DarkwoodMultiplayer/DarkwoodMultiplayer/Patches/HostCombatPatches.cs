@@ -1,0 +1,48 @@
+using DarkwoodMultiplayer.Networking;
+using DarkwoodMultiplayer.Players;
+using HarmonyLib;
+using LiteNetLib;
+using UnityEngine;
+
+namespace DarkwoodMultiplayer.Patches
+{
+    [HarmonyPatch(typeof(MeleeSensor), "OnTriggerEnter", new[] { typeof(Collider) })]
+    public static class HostMeleeSensorPatch
+    {
+        private static bool Prefix(MeleeSensor __instance, Collider _collider)
+        {
+            if (ModRuntime.Network == null || ModRuntime.Network.Role != NetworkRole.Host)
+                return true;
+
+            RemotePlayerProxy proxy = _collider.GetComponentInParent<RemotePlayerProxy>();
+            if (proxy == null)
+                return true;
+
+            bool isPlayer = __instance.type == MeleeSensor.MeleeSensorType.player;
+
+            // Drain weapon durability if it's the host player attacking
+            if (isPlayer && Player.Instance != null && Player.Instance.currentItem != null)
+            {
+                Player.Instance.currentItem.drainDurability(__instance.itemDurabilityDrain);
+            }
+
+            int dmg = Mathf.Max(1, __instance.damage);
+            Vector3 atkPos = __instance.attackerTransform != null
+                ? __instance.attackerTransform.position
+                : proxy.transform.position;
+
+            var msg = new DamagePlayerMessage
+            {
+                Damage = dmg,
+                AttackerPosX = atkPos.x,
+                AttackerPosY = atkPos.y,
+                AttackerPosZ = atkPos.z,
+                CanCutInHalf = dmg >= 80,
+                ShowRedScreen = true
+            };
+            LanNetworkManager.Instance?.Send(NetMessageType.DamagePlayer, w => msg.Serialize(w), DeliveryMethod.ReliableOrdered);
+
+            return false;
+        }
+    }
+}

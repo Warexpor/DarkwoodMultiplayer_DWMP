@@ -8,7 +8,45 @@ namespace DarkwoodMultiplayer.Sync
     public static class CharacterTracker
     {
         private static readonly List<Character> _characters = new List<Character>(64);
+        private static readonly Dictionary<Character, short> _stableIdCache = new Dictionary<Character, short>(64);
         private static readonly object _lock = new object();
+        private static short _nextId = 1;
+
+        public static short GetStableId(Character c)
+        {
+            if (c == null) return 0;
+            lock (_lock)
+            {
+                if (_stableIdCache.TryGetValue(c, out var id))
+                    return id;
+            }
+            return AssignId(c);
+        }
+
+        public static short AssignId(Character c)
+        {
+            if (c == null) return 0;
+            short id;
+            lock (_lock)
+            {
+                id = _nextId++;
+                _stableIdCache[c] = id;
+            }
+            return id;
+        }
+
+        public static Character FindByStableId(short id)
+        {
+            lock (_lock)
+            {
+                for (int i = 0; i < _characters.Count; i++)
+                {
+                    if (_characters[i] != null && _stableIdCache.TryGetValue(_characters[i], out short sid) && sid == id)
+                        return _characters[i];
+                }
+            }
+            return null;
+        }
 
         public static Character[] GetAll()
         {
@@ -29,7 +67,10 @@ namespace DarkwoodMultiplayer.Sync
             lock (_lock)
             {
                 if (!_characters.Contains(c))
+                {
                     _characters.Add(c);
+                    _stableIdCache[c] = _nextId++;
+                }
             }
         }
 
@@ -39,6 +80,7 @@ namespace DarkwoodMultiplayer.Sync
             lock (_lock)
             {
                 _characters.Remove(c);
+                _stableIdCache.Remove(c);
             }
         }
 
@@ -47,6 +89,8 @@ namespace DarkwoodMultiplayer.Sync
             lock (_lock)
             {
                 _characters.Clear();
+                _stableIdCache.Clear();
+                _nextId = 1;
             }
         }
     }

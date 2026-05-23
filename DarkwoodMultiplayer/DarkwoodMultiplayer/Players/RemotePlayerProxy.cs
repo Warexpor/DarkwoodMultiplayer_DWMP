@@ -11,6 +11,8 @@ namespace DarkwoodMultiplayer.Players
         private Vector3 _pushOffset;
         private bool _hasState;
 
+        public static RemotePlayerProxy Instance { get; private set; }
+
         public static RemotePlayerProxy Spawn(ManualLogSource log)
         {
             Player source = PlayerControlRouter.MainPlayer ?? Player.Instance;
@@ -32,10 +34,26 @@ namespace DarkwoodMultiplayer.Players
             EnableCollision(clone, log);
             EnableGroundLight(clone.transform, log);
 
+            AddCharBase(clone, log);
+
             RemotePlayerProxy proxy = clone.AddComponent<RemotePlayerProxy>();
+            Instance = proxy;
             proxy._anim = clone.GetComponent<SecondPlayerAnimController>();
             proxy._shadow = clone.transform.Find("Shadow");
             return proxy;
+        }
+
+        private static void AddCharBase(GameObject go, ManualLogSource log)
+        {
+            CharBase cb = go.GetComponent<CharBase>();
+            if (cb == null)
+                cb = go.AddComponent<CharBase>();
+            cb.alive = true;
+            cb.isActive = true;
+            cb.Health = 1f;
+            cb.maxHealth = 1f;
+            cb.faction = Faction.player;
+            log?.LogInfo("RemoteProxy: added CharBase with Faction.player.");
         }
 
         private static void EnableGroundLight(Transform root, ManualLogSource log)
@@ -50,26 +68,31 @@ namespace DarkwoodMultiplayer.Players
 
         private static void EnableCollision(GameObject clone, ManualLogSource log)
         {
-            Rigidbody rb = clone.GetComponent<Rigidbody>();
-            if (rb == null)
-            {
-                rb = clone.AddComponent<Rigidbody>();
-                log?.LogInfo("RemoteProxy: added kinematic Rigidbody for collision.");
-            }
-            rb.isKinematic = true;
-            rb.useGravity = false;
+            Rigidbody existing = clone.GetComponent<Rigidbody>();
+            if (existing != null)
+                Object.DestroyImmediate(existing);
 
+            Rigidbody rb = clone.AddComponent<Rigidbody>();
+            rb.isKinematic = false;
+            rb.useGravity = false;
+            rb.mass = 5f;
+            rb.drag = 3f;
+            rb.angularDrag = 10f;
+            rb.constraints = RigidbodyConstraints.FreezeRotation | RigidbodyConstraints.FreezePositionY;
+            rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
+            rb.interpolation = RigidbodyInterpolation.Interpolate;
+
+            int enabledCount = 0;
+            int triggerCount = 0;
             foreach (Collider col in clone.GetComponentsInChildren<Collider>(true))
             {
-                if (!col.isTrigger)
-                {
-                    col.enabled = true;
-                    log?.LogInfo("RemoteProxy: enabled collider " + col.name);
-                }
+                col.enabled = true;
+                if (col.isTrigger)
+                    triggerCount++;
+                enabledCount++;
             }
 
-            Collider[] allCols = clone.GetComponentsInChildren<Collider>(true);
-            log?.LogInfo("RemoteProxy: total colliders found = " + allCols.Length);
+            log?.LogInfo($"RemoteProxy: enabled {enabledCount} colliders ({triggerCount} triggers) — non-kinematic, mass=5, drag=3.");
         }
 
         public void ApplyNetworkState(PlayerStateNet state)
@@ -87,7 +110,14 @@ namespace DarkwoodMultiplayer.Players
                 state.LegsClip);
         }
 
-        private static int _proxyCollideCount;
+        private Rigidbody _rb;
+
+        private void Awake()
+        {
+            _rb = GetComponent<Rigidbody>();
+        }
+
+        private static int _pushCollideCount;
 
         private void OnCollisionStay(Collision collision)
         {
@@ -96,8 +126,8 @@ namespace DarkwoodMultiplayer.Players
                 return;
 
             bool isLocal = collision.rigidbody == local.Rigidbody;
-            if (isLocal && ++_proxyCollideCount % 60 == 0)
-                ModRuntime.Log?.LogInfo("[ProxyCollide] player push active isLocal=True");
+            if (isLocal && ++_pushCollideCount % 60 == 0)
+                ModRuntime.Log?.LogInfo("[ProxyCollide] pushed by host player");
 
             if (!isLocal)
                 return;
@@ -106,23 +136,26 @@ namespace DarkwoodMultiplayer.Players
             pushDir.y = 0f;
             if (pushDir.magnitude > 0.01f)
                 pushDir.Normalize();
-            else
-                pushDir = Vector3.zero;
-            pushDir.y = 0f;
-
-            float speed = Mathf.Clamp(collision.relativeVelocity.magnitude * 1.2f, 0f, 6f);
+            float speed = Mathf.Clamp(collision.relativeVelocity.magnitude * 1.5f, 0f, 8f);
             _pushOffset = pushDir * speed;
+        }
+
+        private void FixedUpdate()
+        {
+            if (!_hasState || _rb == null)
+                return;
+
+            Vector3 target = _targetPosition + _pushOffset;
+            float t = 18f * Time.fixedDeltaTime;
+            Vector3 desiredPos = Vector3.Lerp(_rb.position, target, t);
+            desiredPos.y = _rb.position.y;
+            _rb.MovePosition(desiredPos);
+
+            _pushOffset = Vector3.Lerp(_pushOffset, Vector3.zero, Time.fixedDeltaTime * 3f);
         }
 
         private void LateUpdate()
         {
-            if (!_hasState)
-                return;
-
-            Vector3 target = _targetPosition + _pushOffset;
-            transform.position = Vector3.Lerp(transform.position, target, Time.deltaTime * 18f);
-            _pushOffset = Vector3.Lerp(_pushOffset, Vector3.zero, Time.deltaTime * 3f);
-
             if (_shadow != null)
                 _shadow.eulerAngles = new Vector3(90f, 0f, 0f);
         }

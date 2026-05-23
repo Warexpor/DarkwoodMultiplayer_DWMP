@@ -99,6 +99,9 @@
         <Compile Include="Networking\NetworkRole.cs"/>
         <Compile Include="Networking\ClientSaveBridge.cs"/>
         <Compile Include="Networking\WorldSyncService.cs"/>
+        <Compile Include="Networking\PlayerPositionManager.cs"/>
+        <Compile Include="Networking\EntityStateBroadcastService.cs"/>
+        <Compile Include="Networking\ClientEntityInterpolationService.cs"/>
         <Compile Include="Players\CoopInputBridge.cs"/>
         <Compile Include="Players\CoopPlayerBootstrap.cs"/>
         <Compile Include="Players\CoopPlayerMarker.cs"/>
@@ -117,6 +120,14 @@
         <Compile Include="Patches\InputScriptPatches.cs"/>
         <Compile Include="Patches\PlayerUpdatePatch.cs"/>
         <Compile Include="Patches\PlayerInventoryPatches.cs"/>
+        <Compile Include="Patches\HostAIPatches.cs"/>
+        <Compile Include="Patches\ClientAIDisablePatches.cs"/>
+        <Compile Include="Patches\HostCombatPatches.cs"/>
+        <Compile Include="Patches\ClientCombatPatches.cs"/>
+        <Compile Include="Patches\ClientDeathPatches.cs"/>
+        <Compile Include="Patches\ContainerSyncPatches.cs"/>
+        <Compile Include="Patches\BarricadeSyncPatches.cs"/>
+        <Compile Include="Patches\JournalSyncPatches.cs"/>
         <Compile Include="Properties\AssemblyInfo.cs"/>
     </ItemGroup>
     <ItemGroup>
@@ -127,6 +138,7 @@
         <Compile Include="Sync\WorldPhysicsSyncService.cs"/>
         <Compile Include="Sync\DoorSyncPatches.cs"/>
         <Compile Include="Sync\CharacterTracker.cs"/>
+        <Compile Include="Sync\EntityTrackers.cs"/>
     </ItemGroup>
     <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets"/>
     <Target Name="AfterBuild">
