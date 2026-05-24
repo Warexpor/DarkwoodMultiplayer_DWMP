@@ -101,6 +101,18 @@ namespace DarkwoodMultiplayer.Sync
         private static void Postfix(Character __instance)
         {
             CharacterTracker.Add(__instance);
+
+            if (ModRuntime.Network != null && ModRuntime.Network.Role == NetworkRole.Client
+                && __instance.name != null && !__instance.name.Contains("RemotePlayer"))
+            {
+                tk2dSpriteAnimator anim = __instance.GetComponent<tk2dSpriteAnimator>();
+                if (anim != null && anim.CurrentClip == null)
+                {
+                    string idleClip = HarmonyLib.Traverse.Create(__instance).Field("idleAni").GetValue<string>();
+                    if (!string.IsNullOrEmpty(idleClip) && anim.GetClipByName(idleClip) != null)
+                        anim.Play(idleClip);
+                }
+            }
         }
     }
 

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using DarkwoodMultiplayer.Networking;
 using DarkwoodMultiplayer.Players;
 using HarmonyLib;
@@ -31,7 +32,11 @@ namespace DarkwoodMultiplayer.Patches
             if (Physics.Raycast(__instance.transform.position, toRemote, out var hit, dist, 18909185))
             {
                 if (hit.collider == null || (myCollider != null && hit.collider == myCollider)) return;
-                if (hit.collider.GetComponent<RemotePlayerProxy>() == null) return;
+                if (hit.collider.GetComponentInParent<RemotePlayerProxy>() == null) return;
+
+                // Wake up sleeping enemies so they react to the proxy
+                if (__instance.sleeping)
+                    __instance.wakeup();
 
                 __instance.canSeeEnemyFar = true;
                 __instance.stopRoutine("lostEnemy", true);
@@ -81,7 +86,7 @@ namespace DarkwoodMultiplayer.Patches
             if (__instance.sleeping)
             {
                 __instance.wakeup();
-                return false;
+                __instance.sleeping = false;
             }
 
             return true;
@@ -124,6 +129,41 @@ namespace DarkwoodMultiplayer.Patches
     [HarmonyPatch(typeof(Character), "checkStuff")]
     public static class HostCheckStuffPatch
     {
+        private static readonly System.Collections.Generic.HashSet<Character> _suppressed = new System.Collections.Generic.HashSet<Character>();
+        private static readonly System.Collections.Generic.Dictionary<Character, (bool temporary, bool wantDespawn)> _saved =
+            new System.Collections.Generic.Dictionary<Character, (bool, bool)>();
+
+        private static bool Prefix(Character __instance)
+        {
+            if (ModRuntime.Network == null || ModRuntime.Network.Role != NetworkRole.Host)
+                return true;
+            if (!PlayerPositionManager.HasRemotePlayer)
+                return true;
+
+            _suppressed.Remove(__instance);
+
+            float distSq = PlayerPositionManager.SqrDistanceToNearestPlayer(__instance.transform.position);
+            float distToHost = Core.trueDistance(Player.Instance._transform.position, __instance.transform.position);
+
+            bool vanillaWouldRemove = false;
+            if (__instance.temporarySpawned && distToHost > 3500f)
+                vanillaWouldRemove = true;
+            if (__instance.wantToDespawn && distToHost > 1500f)
+                vanillaWouldRemove = true;
+
+            if (!vanillaWouldRemove)
+                return true;
+
+            // Vanilla would remove because host is far; keep alive if nearest player is close
+            if (distSq <= 3500f * 3500f && distSq <= 1500f * 1500f)
+            {
+                _suppressed.Add(__instance);
+                return false;
+            }
+
+            return true;
+        }
+
         private static void Postfix(Character __instance)
         {
             if (ModRuntime.Network == null || ModRuntime.Network.Role != NetworkRole.Host)
@@ -131,17 +171,20 @@ namespace DarkwoodMultiplayer.Patches
             if (!PlayerPositionManager.HasRemotePlayer)
                 return;
 
+            if (!_suppressed.Remove(__instance))
+                return;
+
             float distSq = PlayerPositionManager.SqrDistanceToNearestPlayer(__instance.transform.position);
 
-            if (__instance.temporarySpawned && distSq > 3500f * 3500f)
+            if (distSq > 3500f * 3500f)
             {
-                __instance.removeMe();
-                return;
+                if (__instance.temporarySpawned)
+                    __instance.removeMe();
             }
-
-            if (__instance.wantToDespawn && distSq > 1500f * 1500f)
+            else if (distSq > 1500f * 1500f)
             {
-                __instance.removeMe();
+                if (__instance.wantToDespawn)
+                    __instance.removeMe();
             }
         }
     }
@@ -218,6 +261,10 @@ namespace DarkwoodMultiplayer.Patches
             RemotePlayerProxy proxy = _collider.GetComponentInParent<RemotePlayerProxy>();
             if (proxy == null)
                 return;
+
+            // Wake up first so attackCharacter doesn't return early
+            if (__instance.sleeping)
+                __instance.wakeup();
 
             __instance.attackCharacter(proxy.transform);
         }

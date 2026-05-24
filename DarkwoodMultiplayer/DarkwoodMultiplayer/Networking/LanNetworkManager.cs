@@ -184,7 +184,7 @@ namespace DarkwoodMultiplayer.Networking
 
             foreach (Character c in all)
             {
-                if (c == null || !c.alive || c.dummy || c.sleeping)
+                if (c == null || !c.alive || c.dummy)
                     continue;
                 if (c.target == proxyT)
                     continue;
@@ -194,6 +194,15 @@ namespace DarkwoodMultiplayer.Networking
 
                 if (distToProxy > farRange)
                     continue;
+
+                // Wake up and redirect sleeping enemies near the proxy
+                if (c.sleeping)
+                {
+                    c.wakeup();
+                    if (distToProxy <= farRange)
+                        c.attackCharacter(proxyT);
+                    continue;
+                }
 
                 float nearRange = (float)c.nearViewDistance * c.aniSightRangeModifier;
 
@@ -211,7 +220,7 @@ namespace DarkwoodMultiplayer.Networking
                 Vector3 toProxy = proxyT.position - c.transform.position;
                 if (Physics.Raycast(c.transform.position, toProxy.normalized, out var hit, distToProxy, 18909185))
                 {
-                    if (hit.collider != null && hit.collider.GetComponent<RemotePlayerProxy>() != null)
+                    if (hit.collider != null && hit.collider.GetComponentInParent<RemotePlayerProxy>() != null)
                         c.attackCharacter(proxyT);
                 }
             }
