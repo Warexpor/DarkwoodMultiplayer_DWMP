@@ -6,6 +6,10 @@ using DarkwoodMultiplayer.Players;
 
 namespace DarkwoodMultiplayer.Networking
 {
+    /// <summary>
+    /// Receives entity snapshots from the host and interpolates remote entity positions,
+    /// rotations, and animations on the client for smooth visual playback.
+    /// </summary>
     public static class ClientEntityInterpolationService
     {
         private class EntityInterpState
@@ -36,6 +40,10 @@ namespace DarkwoodMultiplayer.Networking
         private static int _totalSkipped;
         private static int _snapshotCount;
 
+        /// <summary>
+        /// Processes a received entity state message: updates interpolation targets,
+        /// spawns missing entities, synchronises animation clips and alive state.
+        /// </summary>
         public static void ApplySnapshot(EntityStateMessage msg)
         {
             if (msg.Entities == null || msg.Entities.Length == 0)
@@ -94,6 +102,7 @@ namespace DarkwoodMultiplayer.Networking
 
                 if (state.isFirst)
                 {
+                    // First snapshot: snap directly to position instead of interpolating from origin
                     _displayPositions[e.Index] = targetPos;
                     _displayRotations[e.Index] = e.RotY;
                     c.transform.position = targetPos;
@@ -113,6 +122,7 @@ namespace DarkwoodMultiplayer.Networking
                     if (anim != null)
                     {
                         bool clipChanged = anim.CurrentClip == null || anim.CurrentClip.name != e.Clip;
+                        // Guard with GetClipByName to avoid crash if host uses a clip the client doesn't have
                         if (clipChanged && anim.GetClipByName(e.Clip) != null)
                             anim.Play(e.Clip);
 
@@ -127,7 +137,7 @@ namespace DarkwoodMultiplayer.Networking
                 else
                 {
                     // Host entity is dormant (far from host, no clip playing).
-                    // Fall back to idle so client entity doesn't freeze.
+                    // Fall back to idle so client entity doesn't freeze on the last received frame.
                     tk2dSpriteAnimator anim = c.GetComponent<tk2dSpriteAnimator>();
                     if (anim != null && !anim.Playing)
                     {
@@ -139,6 +149,7 @@ namespace DarkwoodMultiplayer.Networking
 
                 if (!e.Alive && state.alive)
                 {
+                    // Entity just died on the host — replicate locally
                     if (c.alive)
                         c.die();
                 }
@@ -153,6 +164,7 @@ namespace DarkwoodMultiplayer.Networking
             _totalSkipped += skipped;
 
             _snapshotCount++;
+            // Log every 10th snapshot for diagnostics without flooding the console
             if (_snapshotCount % 10 == 0)
             {
                 if (sb.Length > 0)
@@ -175,6 +187,10 @@ namespace DarkwoodMultiplayer.Networking
 
         private const float PhantomCleanupDelay = 5f;
 
+        /// <summary>
+        /// Called every frame after the main update; interpolates all tracked entities
+        /// toward their target positions and cleans up stale locally-spawned phantoms.
+        /// </summary>
         public static void TickLateUpdate()
         {
             float now = Time.time;
@@ -237,6 +253,7 @@ namespace DarkwoodMultiplayer.Networking
                 {
                     // Normal interpolation between previous and target
                     float t = elapsed / SnapshotInterval;
+                    // Smoothstep to ease in/out and avoid jerky movement
                     float smoothT = t * t * (3f - 2f * t);
                     _displayPositions[id] = Vector3.Lerp(state.previousPosition, state.targetPosition, smoothT);
                     _displayRotations[id] = Mathf.LerpAngle(state.previousRotY, state.targetRotY, smoothT);
@@ -254,6 +271,10 @@ namespace DarkwoodMultiplayer.Networking
             }
         }
 
+        /// <summary>
+        /// Ensures a character GameObject and its render/animator components are fully active
+        /// so the client can see it even if it was loaded in a dormant state.
+        /// </summary>
         private static void EnsureEntityAwake(Character c)
         {
             if (c == null) return;
@@ -285,11 +306,16 @@ namespace DarkwoodMultiplayer.Networking
                     sprite.color = new Color(col.r, col.g, col.b, 1f);
             }
 
+            // Make rigidbody kinematic to let the host control physics, avoiding local physics interference
             Rigidbody rb = c.GetComponent<Rigidbody>();
             if (rb != null && !rb.isKinematic)
                 rb.isKinematic = true;
         }
 
+        /// <summary>
+        /// Attempts to spawn an entity locally from its prefab path using the host's snapshot data.
+        /// Returns null if the prefab does not exist or lacks a Character component.
+        /// </summary>
         private static Character SpawnEntityLocally(EntitySnapshotNet e)
         {
             if (string.IsNullOrEmpty(e.EntityName))
@@ -321,6 +347,7 @@ namespace DarkwoodMultiplayer.Networking
             }
         }
 
+        /// <summary>Clears all interpolation state (typically on disconnect or scene change).</summary>
         public static void Reset()
         {
             _states.Clear();
@@ -332,6 +359,7 @@ namespace DarkwoodMultiplayer.Networking
             _totalSkipped = 0;
         }
 
+        /// <summary>Logs cumulative apply/skip statistics.</summary>
         public static void LogStats()
         {
             ModRuntime.Log?.LogInfo($"[ClientEntitySync] stats — total applied: {_totalApplied}, total skipped (no local match): {_totalSkipped}");

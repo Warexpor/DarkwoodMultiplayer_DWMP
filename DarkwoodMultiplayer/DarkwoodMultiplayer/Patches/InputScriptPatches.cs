@@ -15,7 +15,6 @@ namespace DarkwoodMultiplayer.Patches
             ModRuntime.EnsureRunning();
             if (Input.GetKeyDown(KeyCode.F2))
                 MultiplayerMenu.ToggleVisible();
-            ModRuntime.LocalSecondPlayer?.Tick();
         }
     }
 

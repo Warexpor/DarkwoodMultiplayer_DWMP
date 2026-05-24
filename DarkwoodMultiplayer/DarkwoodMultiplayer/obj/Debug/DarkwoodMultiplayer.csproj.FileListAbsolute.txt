@@ -19,6 +19,6 @@ C:\DarkwoodMod\DarkwoodMultiplayer\DarkwoodMultiplayer\bin\Debug\BepInEx.Harmony
 C:\DarkwoodMod\DarkwoodMultiplayer\DarkwoodMultiplayer\bin\Debug\LiteNetLib.xml
 C:\DarkwoodMod\DarkwoodMultiplayer\DarkwoodMultiplayer\bin\Debug\MonoMod.Utils.xml
 C:\DarkwoodMod\DarkwoodMultiplayer\DarkwoodMultiplayer\bin\Debug\MonoMod.RuntimeDetour.xml
-C:\DarkwoodMod\DarkwoodMultiplayer\DarkwoodMultiplayer\obj\Debug\Darkwood.2C2E47EE.Up2Date
 C:\DarkwoodMod\DarkwoodMultiplayer\DarkwoodMultiplayer\obj\Debug\DarkwoodMultiplayer.dll
 C:\DarkwoodMod\DarkwoodMultiplayer\DarkwoodMultiplayer\obj\Debug\DarkwoodMultiplayer.pdb
+C:\DarkwoodMod\DarkwoodMultiplayer\DarkwoodMultiplayer\obj\Debug\Darkwood.2C2E47EE.Up2Date

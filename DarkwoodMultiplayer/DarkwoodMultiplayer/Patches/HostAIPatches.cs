@@ -6,6 +6,11 @@ using UnityEngine;
 
 namespace DarkwoodMultiplayer.Patches
 {
+    /// <summary>
+    /// Augments Character.canSeeEnemy on the host so NPCs react to both
+    /// the host player and the remote proxy for detection, targeting,
+    /// and fear/ward effects.
+    /// </summary>
     [HarmonyPatch(typeof(Character), "canSeeEnemy")]
     public static class HostCanSeeEnemyPatch
     {
@@ -181,6 +186,11 @@ namespace DarkwoodMultiplayer.Patches
         }
     }
 
+    /// <summary>
+    /// Ensures sleeping entities wake up when the remote proxy triggers
+    /// attackCharacter, since the proxy is not a real Player and vanilla
+    /// attackCharacter skips wake-up for non-Player targets.
+    /// </summary>
     [HarmonyPatch(typeof(Character), "attackCharacter")]
     public static class HostAttackCharacterPatch
     {
@@ -203,6 +213,11 @@ namespace DarkwoodMultiplayer.Patches
         }
     }
 
+    /// <summary>
+    /// Prevents despawning NPCs when the host is far away if the remote
+    /// player is still close, keeping the entity alive for multiplayer.
+    /// Re-checks distances in Postfix to clean up if both players leave range.
+    /// </summary>
     [HarmonyPatch(typeof(Character), "checkStuff")]
     public static class HostCheckStuffPatch
     {
@@ -269,6 +284,11 @@ namespace DarkwoodMultiplayer.Patches
         }
     }
 
+    /// <summary>
+    /// Forces Character.inSightOrCloseToPlayer to return true when the
+    /// remote proxy is within 1000 units, preventing NPCs from being
+    /// culled or going idle while the remote player is near.
+    /// </summary>
     [HarmonyPatch(typeof(Character), "inSightOrCloseToPlayer")]
     public static class HostInSightOrCloseToPlayerPatch
     {
@@ -296,6 +316,10 @@ namespace DarkwoodMultiplayer.Patches
         }
     }
 
+    /// <summary>
+    /// Redirects NPC fleeing/despawning behavior to run away from the
+    /// nearest player (host or remote) instead of only the host.
+    /// </summary>
     [HarmonyPatch(typeof(Character), "checkIfBeingChased")]
     public static class HostCheckIfBeingChasedPatch
     {
@@ -326,6 +350,11 @@ namespace DarkwoodMultiplayer.Patches
         }
     }
 
+    /// <summary>
+    /// Replicates vanilla Character.onCollideWith behavior for the remote
+    /// proxy, since the proxy has a CharBase but no Player component and
+    /// would otherwise be ignored by vanilla collision logic.
+    /// </summary>
     [HarmonyPatch(typeof(Character), "onCollideWith")]
     public static class HostOnCollideWithProxyPatch
     {
@@ -393,6 +422,11 @@ namespace DarkwoodMultiplayer.Patches
         }
     }
 
+    /// <summary>
+    /// When an NPC starts chasing the remote proxy, registers it in the
+    /// host player's charactersAttackingMe list so the host's UI/audio
+    /// combat indicators trigger correctly.
+    /// </summary>
     [HarmonyPatch(typeof(Character), "setBehaviour")]
     public static class HostSetBehaviourPatch
     {
@@ -457,6 +491,10 @@ namespace DarkwoodMultiplayer.Patches
         }
     }
 
+    /// <summary>
+    /// Initializes a fresh hit-tracking set when a MeleeSensor is spawned,
+    /// so each sensor instance gets its own deduplication state.
+    /// </summary>
     [HarmonyPatch(typeof(MeleeSensor), "OnSpawned")]
     public static class MeleeSensorOnSpawnedPatch
     {
@@ -470,6 +508,10 @@ namespace DarkwoodMultiplayer.Patches
         }
     }
 
+    /// <summary>
+    /// Extends WorldGrid.refreshPosition to also activate grid nodes near
+    /// the remote proxy, preventing proxy-visibility culling on the host.
+    /// </summary>
     [HarmonyPatch(typeof(WorldGrid), "refreshPosition")]
     public static class HostWorldGridProxyCullPatch
     {

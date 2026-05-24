@@ -4,31 +4,11 @@ using UnityEngine;
 
 namespace DarkwoodMultiplayer.Patches
 {
-    [HarmonyPatch(typeof(Player), "Update")]
-    public static class PlayerUpdatePatch
-    {
-        private static void Postfix(Player __instance)
-        {
-            if (!PlayerControlRouter.HasSecond)
-                return;
-
-            if (LocalSecondPlayerManager.Instance == null)
-                return;
-
-            Player active = LocalSecondPlayerManager.IsControllingSecond
-                ? PlayerControlRouter.SecondPlayer
-                : PlayerControlRouter.MainPlayer;
-
-            if (__instance != active)
-                return;
-
-            if (LocalSecondPlayerManager.IsControllingSecond)
-                PlayerVisionController.RefreshMainFov(PlayerControlRouter.GetMainForVision());
-
-            LocalSecondPlayerManager.Instance.EnforceVisionAndCamera();
-        }
-    }
-
+    /// <summary>
+    /// Prevents input/selection on inactive player instances when a second
+    /// player exists (e.g. the remote proxy).  All patches are no-ops when
+    /// <see cref="PlayerControlRouter.HasSecond"/> is false.
+    /// </summary>
     [HarmonyPatch(typeof(Player), "FindInput")]
     public static class FindInputImmobilisePatch
     {
@@ -40,8 +20,6 @@ namespace DarkwoodMultiplayer.Patches
             if (!PlayerControlRouter.IsActive(__instance))
                 return false;
 
-            if (__instance == PlayerControlRouter.SecondPlayer)
-                ModRuntime.Log?.LogInfo($"[P2 FindInput] immobilised={__instance.immobilised} entering");
             return !__instance.immobilised;
         }
     }

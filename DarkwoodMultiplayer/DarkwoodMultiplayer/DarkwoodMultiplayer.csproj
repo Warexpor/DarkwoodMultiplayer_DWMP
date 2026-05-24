@@ -90,7 +90,6 @@
     </ItemGroup>
     <ItemGroup>
         <Compile Include="Config\ModConfig.cs"/>
-        <Compile Include="Config\PlayMode.cs"/>
         <Compile Include="DarkwoodMultiplayerEntry.cs"/>
         <Compile Include="ModRuntime.cs"/>
         <Compile Include="PluginInfo.cs"/>
@@ -102,13 +101,11 @@
         <Compile Include="Networking\PlayerPositionManager.cs"/>
         <Compile Include="Networking\EntityStateBroadcastService.cs"/>
         <Compile Include="Networking\ClientEntityInterpolationService.cs"/>
-        <Compile Include="Players\CoopInputBridge.cs"/>
         <Compile Include="Players\CoopPlayerBootstrap.cs"/>
         <Compile Include="Players\CoopPlayerMarker.cs"/>
         <Compile Include="Players\CoopPlayerRegistry.cs"/>
         <Compile Include="Patches\CoopGameplayPatches.cs"/>
         <Compile Include="Players\LocalPlayerBodyController.cs"/>
-        <Compile Include="Players\LocalSecondPlayerManager.cs"/>
         <Compile Include="Players\PlayerAnimationSnapshot.cs"/>
         <Compile Include="Players\PlayerControlRouter.cs"/>
         <Compile Include="Players\PlayerVisionController.cs"/>
@@ -130,6 +127,7 @@
         <Compile Include="Patches\ContainerSyncPatches.cs"/>
         <Compile Include="Patches\BarricadeSyncPatches.cs"/>
         <Compile Include="Patches\JournalSyncPatches.cs"/>
+        <Compile Include="Patches\SaveSyncPatches.cs"/>
         <Compile Include="Properties\AssemblyInfo.cs"/>
     </ItemGroup>
     <ItemGroup>

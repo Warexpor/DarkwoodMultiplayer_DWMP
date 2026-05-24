@@ -3,11 +3,20 @@ using UnityEngine;
 
 namespace DarkwoodMultiplayer.Players
 {
+    /// <summary>
+    /// Convenience queries across all active co-op player instances.
+    /// </summary>
     public static class CoopPlayerRegistry
     {
+        /// <summary>
+        /// True when both the main and second local players are available.
+        /// </summary>
         public static bool HasMultiplePlayers =>
             PlayerControlRouter.MainPlayer != null && PlayerControlRouter.SecondPlayer != null;
 
+        /// <summary>
+        /// Yields every registered Player (main, then second if present).
+        /// </summary>
         public static IEnumerable<Player> AllPlayers()
         {
             if (PlayerControlRouter.MainPlayer != null)
@@ -17,6 +26,9 @@ namespace DarkwoodMultiplayer.Players
                 yield return PlayerControlRouter.SecondPlayer;
         }
 
+        /// <summary>
+        /// Returns the nearest alive Player to worldPos, or null if none found.
+        /// </summary>
         public static Player GetNearestLivingPlayer(Vector3 worldPos)
         {
             Player best = null;
@@ -38,12 +50,18 @@ namespace DarkwoodMultiplayer.Players
             return best;
         }
 
+        /// <summary>
+        /// Returns the Transform of the nearest alive Player, or null.
+        /// </summary>
         public static Transform GetNearestLivingPlayerTransform(Vector3 worldPos)
         {
             Player player = GetNearestLivingPlayer(worldPos);
             return player != null ? player.transform : null;
         }
 
+        /// <summary>
+        /// Populates outList with all registered players (main, then second if present).
+        /// </summary>
         public static void GetAllPlayers(List<Player> outList)
         {
             if (PlayerControlRouter.MainPlayer != null)

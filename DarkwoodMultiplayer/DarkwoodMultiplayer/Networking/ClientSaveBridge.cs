@@ -8,16 +8,26 @@ namespace DarkwoodMultiplayer.Networking
         private static WorldSessionMessage _pendingHostSession;
         private static string _lastClientSaveNote;
 
+        /// <summary>
+        /// Human-readable note describing what save the client should load before connecting.
+        /// </summary>
         public static string LastClientSaveNote => _lastClientSaveNote;
 
+        /// <summary>
+        /// Returns the current profile's save slot name (e.g. "profile_0").
+        /// </summary>
         public static string GetActiveSaveSlotName()
         {
+            // Darkwood identifies save slots by "profile_" + profile id
             if (Core.currentProfile != null)
                 return "profile_" + Core.currentProfile.id;
 
             return "unknown";
         }
 
+        /// <summary>
+        /// Returns a deterministic world seed based on the current chapter.
+        /// </summary>
         public static int GetWorldSeed()
         {
             if (Singleton<WorldGenerator>.Instance != null)
@@ -26,6 +36,9 @@ namespace DarkwoodMultiplayer.Networking
             return 0;
         }
 
+        /// <summary>
+        /// Returns the current chapter ID from the world generator or profile fallback.
+        /// </summary>
         public static int GetChapterId()
         {
             if (Singleton<WorldGenerator>.Instance != null)
@@ -37,6 +50,9 @@ namespace DarkwoodMultiplayer.Networking
             return 0;
         }
 
+        /// <summary>
+        /// Returns the current in-game day index from the player profile.
+        /// </summary>
         public static int GetDayIndex()
         {
             if (Core.currentProfile != null)
@@ -45,6 +61,9 @@ namespace DarkwoodMultiplayer.Networking
             return 0;
         }
 
+        /// <summary>
+        /// Returns the name of the player's current big location, or empty if unavailable.
+        /// </summary>
         public static string GetBigLocationName()
         {
             Player player = Player.Instance;
@@ -54,6 +73,10 @@ namespace DarkwoodMultiplayer.Networking
             return player.whereAmI.bigLocation.name;
         }
 
+        /// <summary>
+        /// Stores a pending host session and builds a human-readable note so the client
+        /// knows which save profile to load before connecting.
+        /// </summary>
         public static void NoteClientShouldMatchHost(WorldSessionMessage session)
         {
             _pendingHostSession = session;
@@ -67,6 +90,10 @@ namespace DarkwoodMultiplayer.Networking
                 + "). Use the same BepInEx profile/save before connecting. Full inventory/world replication is planned for v1.0.";
         }
 
+        /// <summary>
+        /// Attempts to retrieve a previously stored pending host session.
+        /// Returns true if a session with a valid save slot name is available.
+        /// </summary>
         public static bool TryGetPendingHostSession(out WorldSessionMessage session)
         {
             session = _pendingHostSession;

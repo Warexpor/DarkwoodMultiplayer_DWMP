@@ -10,7 +10,7 @@ namespace DarkwoodMultiplayer.Patches
     /// <summary>
     /// Replaces Sniffer.Update entirely on the host.
     /// Checks BOTH the host player (Player.Instance) and the proxy for smell range,
-    /// and sniffs/closest one. When the sniff completes, attacks whichever player
+    /// and sniffs the closest one. When the sniff completes, attacks whichever player
     /// triggered the sniff.
     /// </summary>
     [HarmonyPatch(typeof(Sniffer), "Update")]
@@ -137,6 +137,11 @@ namespace DarkwoodMultiplayer.Patches
         }
     }
 
+    /// <summary>
+    /// Applies EnemyOfTheForest / FriendOfTheForest effects when the
+    /// remote proxy is seen near an animalAggressive entity, overriding
+    /// its default behaviour.
+    /// </summary>
     [HarmonyPatch(typeof(Character), "onSeeEnemyNear")]
     public static class HostOnSeeEnemyNearPatch
     {
@@ -169,6 +174,10 @@ namespace DarkwoodMultiplayer.Patches
         }
     }
 
+    /// <summary>
+    /// Ensures growl audio + alertCharactersInArea fire even when the
+    /// target is the remote proxy. Vanilla growl is skipped for non-Player targets.
+    /// </summary>
     [HarmonyPatch(typeof(Character), "growl")]
     public static class HostGrowlPatch
     {

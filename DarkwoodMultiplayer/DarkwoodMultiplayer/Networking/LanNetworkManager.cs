@@ -1,7 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
-using DarkwoodMultiplayer.Config;
 using DarkwoodMultiplayer.Players;
 using DarkwoodMultiplayer.Sync;
 using HarmonyLib;
@@ -12,7 +12,7 @@ namespace DarkwoodMultiplayer.Networking
 {
     public sealed class LanNetworkManager : MonoBehaviour, INetEventListener
     {
-        public const float SendInterval = 0.05f;
+        public const float SendInterval = 0.033f;
 
         public static LanNetworkManager Instance { get; private set; }
 
@@ -25,6 +25,7 @@ namespace DarkwoodMultiplayer.Networking
         private float _proxyAggroTimer;
         private float _effectSyncTimer;
         private Vector3 _lastSentPosition;
+        private bool _wasDragging;
         private bool _handshakeComplete;
 
         public NetworkRole Role => _role;
@@ -32,8 +33,12 @@ namespace DarkwoodMultiplayer.Networking
         public string StatusText { get; private set; } = "Offline";
         public WorldSyncService WorldSync => _worldSync;
         public RemotePlayerProxy RemoteProxy => _remoteProxy;
+        public Transform RemoteProxyTransform => _remoteProxy != null ? _remoteProxy.transform : null;
 
         public static bool IsApplyingRemoteState { get; private set; }
+
+        /// <summary>True while performing a save triggered by the remote peer.</summary>
+        internal static bool _isRemoteSaveInProgress;
 
         public event Action Connected;
         public event Action Disconnected;
@@ -46,13 +51,6 @@ namespace DarkwoodMultiplayer.Networking
 
         public void StartHost(int port)
         {
-            if (!ModConfig.IsLanMode)
-            {
-                StatusText = "LAN disabled — set PlayMode = LAN in config";
-                ModRuntime.Log.LogWarning(StatusText);
-                return;
-            }
-
             StopNetwork();
             _role = NetworkRole.Host;
             _net = new NetManager(this) { UnconnectedMessagesEnabled = true };
@@ -69,13 +67,6 @@ namespace DarkwoodMultiplayer.Networking
 
         public void ConnectToHost(string address, int port)
         {
-            if (!ModConfig.IsLanMode)
-            {
-                StatusText = "LAN disabled — set PlayMode = LAN in config";
-                ModRuntime.Log.LogWarning(StatusText);
-                return;
-            }
-
             StopNetwork();
             _role = NetworkRole.Client;
             _net = new NetManager(this) { UnconnectedMessagesEnabled = true };
@@ -109,9 +100,6 @@ namespace DarkwoodMultiplayer.Networking
 
         private void Update()
         {
-            if (!ModConfig.IsLanMode)
-                return;
-
             _net?.PollEvents();
 
             if (!IsConnected || !_handshakeComplete)
@@ -162,7 +150,7 @@ namespace DarkwoodMultiplayer.Networking
                 }
             }
 
-            // Both sides: send own position to the other side at 20 Hz
+            // Both sides: send own position to the other side at ~30 Hz
             var msg = new PlayerStateMessage
             {
                 PosX = pos.x,
@@ -184,6 +172,39 @@ namespace DarkwoodMultiplayer.Networking
             // Host: also track own position locally for AI checks
             if (_role == NetworkRole.Host)
                 PlayerPositionManager.ReportHostPosition(pos);
+
+            // Both sides: if dragging an object, sync its position at ~30 Hz
+            if (local.dragging && local.itemBeingDragged != null)
+            {
+                Item dragged = local.itemBeingDragged;
+                var dragMsg = new DragSyncMessage
+                {
+                    PosX = dragged.transform.position.x,
+                    PosY = dragged.transform.position.y,
+                    PosZ = dragged.transform.position.z,
+                    RotX = dragged.transform.eulerAngles.x,
+                    RotY = dragged.transform.eulerAngles.y,
+                    RotZ = dragged.transform.eulerAngles.z,
+                    IsDragging = true,
+                    ObjectName = dragged.name,
+                    ItemType = dragged.invItem != null ? dragged.invItem.type : ""
+                };
+                Send(NetMessageType.DragSync, w => dragMsg.Serialize(w));
+                _wasDragging = true;
+            }
+            else if (_wasDragging)
+            {
+                // Drag ended — send one final message so the receiver knows
+                // to clean up any locally-spawned copy.
+                _wasDragging = false;
+                Item prevDragged = local.itemBeingDragged;
+                var dragMsg = new DragSyncMessage
+                {
+                    IsDragging = false,
+                    ObjectName = prevDragged != null ? prevDragged.name : ""
+                };
+                Send(NetMessageType.DragSync, w => dragMsg.Serialize(w));
+            }
         }
 
         private void ProxyAggroCheck()
@@ -209,7 +230,10 @@ namespace DarkwoodMultiplayer.Networking
                     continue;
 
                 if (c.target == proxyT)
+                {
+                    skippedAlreadyTargeting++;
                     continue;
+                }
 
                 // Skip neutral entities (rabbits, pigs, chickens) — they flee, never chase
                 // However, EnemyOfTheForest makes all animalAggressive entities attack
@@ -301,7 +325,6 @@ namespace DarkwoodMultiplayer.Networking
 
         private void LateUpdate()
         {
-            if (!ModConfig.IsLanMode) return;
             if (!IsConnected || !_handshakeComplete) return;
 
             // Both sides: interpolate world physics objects
@@ -429,6 +452,12 @@ namespace DarkwoodMultiplayer.Networking
                 case NetMessageType.PlayerEffectSync:
                     HandlePlayerEffectSync(PlayerEffectSyncMessage.Deserialize(new NetReader(payload)));
                     break;
+                case NetMessageType.DragSync:
+                    HandleDragSync(DragSyncMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.SaveSync:
+                    HandleSaveSync();
+                    break;
                 }
             }
             finally
@@ -526,6 +555,201 @@ namespace DarkwoodMultiplayer.Networking
             {
                 ClientEntityInterpolationService.ApplySnapshot(msg);
             }
+        }
+
+        // Tracks host-spawned copies of items that don't exist on this side
+        // (e.g. remote player dragged an item in an unloaded world-grid chunk).
+        private readonly HashSet<int> _spawnedDragProxyItems = new HashSet<int>();
+
+        private void HandleDragSync(DragSyncMessage msg)
+        {
+            EnsureRemoteProxy();
+
+            Vector3 targetPos = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
+            Vector3 targetRot = new Vector3(msg.RotX, msg.RotY, msg.RotZ);
+
+            if (!msg.IsDragging)
+            {
+                // Drag ended — destroy the locally-spawned proxy copy so it
+                // doesn't linger as a duplicate when the world-grid chunk loads.
+                CleanupSpawnedDragProxy(msg.ObjectName);
+                return;
+            }
+
+            Item item = FindDraggedItemLocally(msg.ObjectName, targetPos);
+            if (item == null)
+            {
+                // Item doesn't exist on this side — spawn it on-demand so we
+                // can reflect the remote player's manipulation.
+                item = SpawnDraggedItem(msg);
+                if (item == null)
+                {
+                    ModRuntime.Log?.LogInfo("[DragSync] cannot spawn \"" + msg.ObjectName + "\" type=" + msg.ItemType);
+                    return;
+                }
+                _spawnedDragProxyItems.Add(item.GetInstanceID());
+                ModRuntime.Log?.LogInfo("[DragSync] spawned " + item.name + " for remote drag");
+            }
+
+            // Remove from interpolation — DragSyncMessage is more authoritative
+            // and instant, while UpdateObjectInterpolation would smooth over
+            // the jump and fight subsequent DragSync updates.
+            Sync.WorldPhysicsSyncService.RemoveObjectFromInterpolation(item.gameObject);
+
+            Rigidbody targetRb = item.GetComponent<Rigidbody>();
+            if (targetRb != null)
+            {
+                targetRb.position = targetPos;
+                targetRb.rotation = Quaternion.Euler(targetRot);
+                targetRb.velocity = Vector3.zero;
+                targetRb.angularVelocity = Vector3.zero;
+            }
+
+            ModRuntime.Log?.LogInfo("[DragSync] " + item.name + " → " + targetPos);
+        }
+
+        /// <summary>Spawn an item on this peer so the remote drag can be reflected.</summary>
+        private Item SpawnDraggedItem(DragSyncMessage msg)
+        {
+            if (string.IsNullOrEmpty(msg.ItemType))
+            {
+                ModRuntime.Log?.LogInfo("[DragSync] no ItemType to spawn \"" + msg.ObjectName + "\"");
+                return null;
+            }
+
+            if (Singleton<ItemsDatabase>.Instance == null)
+            {
+                ModRuntime.Log?.LogWarning("[DragSync] ItemsDatabase not available");
+                return null;
+            }
+
+            if (!Singleton<ItemsDatabase>.Instance.hasItem(msg.ItemType))
+            {
+                ModRuntime.Log?.LogInfo("[DragSync] ItemsDatabase has no item type \"" + msg.ItemType + "\"");
+                return null;
+            }
+
+            InvItem itemDef = Singleton<ItemsDatabase>.Instance.getItem(msg.ItemType, instantiate: false);
+            if (itemDef == null || itemDef.item == null)
+            {
+                ModRuntime.Log?.LogInfo("[DragSync] no prefab for \"" + msg.ItemType + "\"");
+                return null;
+            }
+
+            GameObject prefab = itemDef.item as GameObject;
+            if (prefab == null)
+            {
+                ModRuntime.Log?.LogInfo("[DragSync] prefab is not a GameObject for \"" + msg.ItemType + "\"");
+                return null;
+            }
+
+            Vector3 pos = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
+            Quaternion rot = Quaternion.Euler(msg.RotX, msg.RotY, msg.RotZ);
+            GameObject go = Core.AddPrefab(prefab, pos, rot, null);
+            if (go == null)
+            {
+                // Fallback: direct instantiate if Core.AddPrefab fails
+                go = UnityEngine.Object.Instantiate(prefab, pos, rot);
+            }
+
+            if (go == null) return null;
+
+            Rigidbody rb = go.GetComponent<Rigidbody>();
+            if (rb != null)
+            {
+                rb.isKinematic = false;
+                rb.position = pos;
+                rb.rotation = rot;
+                rb.velocity = Vector3.zero;
+                rb.angularVelocity = Vector3.zero;
+            }
+
+            return go.GetComponent<Item>();
+        }
+
+        /// <summary>Destroy a proxy-spawned copy when the remote player stops dragging.</summary>
+        private void CleanupSpawnedDragProxy(string objectName)
+        {
+            if (_spawnedDragProxyItems.Count == 0) return;
+
+            List<int> toRemove = new List<int>();
+            foreach (int id in _spawnedDragProxyItems)
+            {
+                // Find by name as a safety check
+                GameObject go = null;
+                foreach (Item candidate in UnityEngine.Object.FindObjectsOfType<Item>())
+                {
+                    if (candidate.GetInstanceID() == id)
+                    {
+                        go = candidate.gameObject;
+                        break;
+                    }
+                }
+
+                if (go != null)
+                {
+                    // Match by name if provided
+                    if (!string.IsNullOrEmpty(objectName) && !go.name.Equals(objectName, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    ModRuntime.Log?.LogInfo("[DragSync] destroying proxy-spawned " + go.name);
+                    UnityEngine.Object.Destroy(go);
+                }
+                toRemove.Add(id);
+            }
+
+            foreach (int id in toRemove)
+                _spawnedDragProxyItems.Remove(id);
+        }
+
+        /// <summary>Find a draggable Item on this peer by name and proximity.</summary>
+        private Item FindDraggedItemLocally(string name, Vector3 nearPos)
+        {
+            // Strategy 1: overlap sphere near the reported position (radius 6u
+            // to cover the gap between the sent position and the local copy).
+            Collider[] nearby = Physics.OverlapSphere(nearPos, 6f);
+            Item best = null;
+            float bestDist = 6f;
+            for (int i = 0; i < nearby.Length; i++)
+            {
+                if (nearby[i] == null || nearby[i].isTrigger) continue;
+                Rigidbody rb = nearby[i].attachedRigidbody;
+                if (rb == null) continue;
+                Item item = rb.GetComponent<Item>();
+                if (item == null || !item.draggable) continue;
+                if (item.beingDragged) continue; // skip locally-dragged items
+                if (!string.IsNullOrEmpty(name) && !item.name.Equals(name, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                float d = Vector3.Distance(rb.position, nearPos);
+                if (d < bestDist)
+                {
+                    bestDist = d;
+                    best = item;
+                }
+            }
+            if (best != null)
+            {
+                ModRuntime.Log?.LogInfo("[DragSync] found " + best.name + " near pos (" + bestDist.ToString("F1") + " u)");
+                return best;
+            }
+
+            // Strategy 2: global scan by name — catches objects on unloaded
+            // world-grid chunks or far from the reported position.
+            if (!string.IsNullOrEmpty(name))
+            {
+                foreach (Item candidate in UnityEngine.Object.FindObjectsOfType<Item>())
+                {
+                    if (candidate == null || !candidate.draggable) continue;
+                    if (candidate.beingDragged) continue;
+                    if (candidate.name.Equals(name, StringComparison.OrdinalIgnoreCase))
+                    {
+                        ModRuntime.Log?.LogInfo("[DragSync] found " + candidate.name + " via global scan");
+                        return candidate;
+                    }
+                }
+            }
+
+            return null;
         }
 
         private void HandlePlayerAttack(PlayerAttackMessage msg)
@@ -660,11 +884,31 @@ namespace DarkwoodMultiplayer.Networking
 
         private void HandleWorkbenchLevel(WorkbenchLevelMessage msg)
         {
-            if (Singleton<Controller>.Instance != null)
+            if (Singleton<Controller>.Instance == null) return;
+
+            int prevLevel = Singleton<Controller>.Instance.workbenchLevel;
+            Singleton<Controller>.Instance.workbenchLevel = msg.Level;
+            ModRuntime.Log?.LogInfo("[Workbench] Level synced from " + prevLevel + " to " + msg.Level);
+
+            // If the workbench inventory is currently open, refresh the display
+            // so the player sees the updated level and recipes immediately.
+            try
             {
-                Singleton<Controller>.Instance.workbenchLevel = msg.Level;
-                ModRuntime.Log?.LogInfo("[Workbench] Level synced to " + msg.Level);
+                if (Player.Instance != null && Player.Instance.openedItemInventory != null)
+                {
+                    Workbench wb = Player.Instance.openedItemInventory.GetComponent<Workbench>();
+                    if (wb == null)
+                        wb = Player.Instance.openedItemInventory.transform.parent?.GetComponent<Workbench>();
+
+                    if (wb != null)
+                    {
+                        wb.currentLevel = msg.Level;
+                        wb.refreshWorkbenchUpgrade();
+                        wb.workbenchInventory.refreshRecipes();
+                    }
+                }
             }
+            catch { }
         }
 
         private void HandleJournalItem(JournalItemMessage msg)
@@ -758,6 +1002,7 @@ namespace DarkwoodMultiplayer.Networking
         public void SendDoorState(DoorState door)
         {
             if (!IsConnected) return;
+            if (IsApplyingRemoteState) return;
             var msg = new PhysicsStateMessage { Doors = new[] { door } };
             Send(NetMessageType.PhysicsState, w => msg.Serialize(w));
         }
@@ -765,6 +1010,7 @@ namespace DarkwoodMultiplayer.Networking
         public void SendTrapState(TrapState ts)
         {
             if (!IsConnected) return;
+            if (IsApplyingRemoteState) return;
             var msg = new PhysicsStateMessage { Traps = new[] { ts } };
             ModRuntime.Log?.LogInfo("[TrapSync] sending trap triggered at " + ts.PosX + "," + ts.PosY + "," + ts.PosZ);
             Send(NetMessageType.PhysicsState, w => msg.Serialize(w));
@@ -773,6 +1019,7 @@ namespace DarkwoodMultiplayer.Networking
         public void SendItemSpawn(ItemSpawnMessage msg)
         {
             if (!IsConnected) return;
+            if (IsApplyingRemoteState) return;
             ModRuntime.Log?.LogInfo("[ItemSpawn] sending " + msg.ItemType + " at " + msg.PosX + "," + msg.PosY + "," + msg.PosZ);
             Send(NetMessageType.ItemSpawn, w => msg.Serialize(w));
         }
@@ -780,6 +1027,7 @@ namespace DarkwoodMultiplayer.Networking
         public void SendGeneratorState(GeneratorState gs)
         {
             if (!IsConnected) return;
+            if (IsApplyingRemoteState) return;
             var msg = new PhysicsStateMessage { Generators = new[] { gs } };
             Send(NetMessageType.PhysicsState, w => msg.Serialize(w));
         }
@@ -787,7 +1035,58 @@ namespace DarkwoodMultiplayer.Networking
         public void SendLightState(LightStateMessage ls)
         {
             if (!IsConnected) return;
+            if (IsApplyingRemoteState) return;
             Send(NetMessageType.LightState, w => ls.Serialize(w));
+        }
+
+        /// <summary>Sends a save-sync trigger to the remote peer.</summary>
+        public void SendSaveSync()
+        {
+            if (!IsConnected) return;
+            if (_isRemoteSaveInProgress) return;
+            ModRuntime.Log?.LogInfo("[SaveSync] sending save trigger to remote");
+            Send(NetMessageType.SaveSync, w => new SaveSyncMessage().Serialize(w), LiteNetLib.DeliveryMethod.ReliableOrdered);
+        }
+
+        /// <summary>Handles a save-sync trigger from the remote peer.</summary>
+        private void HandleSaveSync()
+        {
+            if (_isRemoteSaveInProgress) return;
+            ModRuntime.Log?.LogInfo("[SaveSync] received save trigger from remote, saving locally");
+            _isRemoteSaveInProgress = true;
+            try
+            {
+                // Show saving indicator immediately so the local player sees feedback
+                try
+                {
+                    if (Singleton<UI>.Instance != null)
+                        Singleton<UI>.Instance.showSavingIndicator();
+                }
+                catch { }
+
+                // Perform the actual save. The showSavingIndicator parameter defaults to true
+                // so finishSaving will also call it, but we already showed it above.
+                SaveManager save = Singleton<SaveManager>.Instance;
+                if (save != null)
+                {
+                    save.Save(doJson: false, doSaveProfile: true, force: true);
+
+                    // Ensure lastTimeSaved is updated so the "time since last save" timer
+                    // on both sides shows roughly the same value.
+                    // (SaveManager sets this only inside the non-early-return path.)
+                    var t = HarmonyLib.Traverse.Create(save);
+                    t.Field("lastTimeSaved").SetValue(System.DateTime.Now);
+                }
+
+                // Also sync the profile's timeSaved string so the save selection screen
+                // shows consistent timestamps across players.
+                if (Core.currentProfile != null)
+                    Core.currentProfile.timeSaved = System.DateTime.Now.ToString();
+            }
+            finally
+            {
+                _isRemoteSaveInProgress = false;
+            }
         }
 
         private void SendWorldSnapshot()

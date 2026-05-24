@@ -10,6 +10,9 @@ namespace DarkwoodMultiplayer.Players
     /// </summary>
     public static class CoopPlayerBootstrap
     {
+        /// <summary>
+        /// Wires internal fields/animators on a freshly instantiated Player clone so vanilla Update does not NRE.
+        /// </summary>
         public static void RunLightweightStart(Player player, Player template)
         {
             if (player == null)
@@ -74,6 +77,7 @@ namespace DarkwoodMultiplayer.Players
             float yPos = Core.getYpos(PosType.player, randomize: false);
             t.Field("yPos").SetValue(yPos);
 
+            // Disable flashlight on clone so only the original player controls it
             Light2D flash = t.Field("Flashlight").GetValue<Light2D>();
             if (flash != null)
                 flash.gameObject.SetActive(false);
@@ -162,6 +166,7 @@ namespace DarkwoodMultiplayer.Players
             Transform audio = player.transform.Find("AudioListener");
             if (audio == null)
             {
+                // Stub needed because vanilla code expects audioListener.gameObject to exist
                 GameObject stub = new GameObject("AudioListenerStub");
                 stub.transform.SetParent(player.transform, false);
                 audio = stub.transform;
@@ -244,6 +249,9 @@ namespace DarkwoodMultiplayer.Players
                 player.Hotbar.selectSlot(template.Hotbar.getSelectedSlotId());
         }
 
+        /// <summary>
+        /// Fixes null inventory/InvItemClass references on every slot so the clone does not NRE when accessing inventory UI.
+        /// </summary>
         public static void SanitizeInventorySlots(Player player)
         {
             Inventory[] invs = player.GetComponents<Inventory>();
@@ -263,6 +271,7 @@ namespace DarkwoodMultiplayer.Players
                     if (!InvItemClass.isNull(slot.invItem))
                     {
                         slot.invItem.assignClass();
+                        // Re-link the slot's back-reference so invItem operations don't NRE
                         Traverse.Create(slot.invItem).Field("_slot").SetValue(slot);
                     }
                 }

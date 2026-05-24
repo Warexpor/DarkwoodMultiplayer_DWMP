@@ -1,5 +1,4 @@
 using BepInEx.Logging;
-using DarkwoodMultiplayer.Config;
 
 namespace DarkwoodMultiplayer.Networking
 {
@@ -44,9 +43,6 @@ namespace DarkwoodMultiplayer.Networking
         {
             _hostSession = session;
             _clientReady = true;
-
-            if (!ModConfig.IsLanMode)
-                return;
 
             _log.LogInfo(
                 "World session "

@@ -4,6 +4,10 @@ using LiteNetLib;
 
 namespace DarkwoodMultiplayer.Patches
 {
+    /// <summary>
+    /// Shared helper methods for journal item synchronization (notes,
+    /// keys, quest items, journal entries) between host and clients.
+    /// </summary>
     internal static class JournalSyncHelpers
     {
         internal static void SendJournalItem(JournalItemKind kind, string type)
@@ -16,6 +20,9 @@ namespace DarkwoodMultiplayer.Patches
         }
     }
 
+    /// <summary>
+    /// Syncs journal note pickups to connected clients.
+    /// </summary>
     [HarmonyPatch(typeof(JournalNoteReference), "pickup")]
     public static class JournalNotePickupPatch
     {
@@ -29,6 +36,9 @@ namespace DarkwoodMultiplayer.Patches
         }
     }
 
+    /// <summary>
+    /// Syncs key pickups to connected clients.
+    /// </summary>
     [HarmonyPatch(typeof(KeyReference), "pickup")]
     public static class JournalKeyPickupPatch
     {
@@ -39,6 +49,9 @@ namespace DarkwoodMultiplayer.Patches
         }
     }
 
+    /// <summary>
+    /// Syncs quest item pickups to connected clients.
+    /// </summary>
     [HarmonyPatch(typeof(QuestItemReference), "pickup")]
     public static class JournalQuestItemPickupPatch
     {
@@ -49,6 +62,10 @@ namespace DarkwoodMultiplayer.Patches
         }
     }
 
+    /// <summary>
+    /// Syncs journal entry additions to connected clients (e.g. story
+    /// progression entries).
+    /// </summary>
     [HarmonyPatch(typeof(Journal), "addJournalEntry")]
     public static class JournalEntryPatch
     {
@@ -59,16 +76,21 @@ namespace DarkwoodMultiplayer.Patches
         }
     }
 
+    /// <summary>
+    /// Syncs workbench upgrade level to connected clients after a craft
+    /// that advances the workbench.
+    /// </summary>
     [HarmonyPatch(typeof(CraftingRecipes), "doCraft")]
     public static class WorkbenchUpgradePatch
     {
         private static void Postfix()
         {
+            if (LanNetworkManager.IsApplyingRemoteState) return;
             if (ModRuntime.Network == null || !ModRuntime.Network.IsConnected) return;
             if (Singleton<Controller>.Instance == null) return;
             int level = Singleton<Controller>.Instance.workbenchLevel;
             var msg = new WorkbenchLevelMessage { Level = level };
-            LanNetworkManager.Instance.Send(NetMessageType.WorkbenchLevel, w => msg.Serialize(w), DeliveryMethod.ReliableOrdered);
+            ModRuntime.Network.Send(NetMessageType.WorkbenchLevel, w => msg.Serialize(w), DeliveryMethod.ReliableOrdered);
         }
     }
 }

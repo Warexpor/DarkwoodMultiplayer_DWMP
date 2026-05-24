@@ -4,29 +4,46 @@ using UnityEngine;
 
 namespace DarkwoodMultiplayer.Players
 {
+    /// <summary>
+    /// Network-driven proxy that mimics a remote player's position, animation, and collision.
+    /// </summary>
     public sealed class RemotePlayerProxy : MonoBehaviour
     {
         private SecondPlayerAnimController _anim;
         private Transform _shadow;
         private Vector3 _targetPosition;
+        // Accumulated push force from local player collisions
         private Vector3 _pushOffset;
         private bool _hasState;
         private Rigidbody _rb;
+        // True while the remote player is mid-vault (colliders temporarily disabled)
         private bool _isVaulting;
         private Collider[] _cachedColliders;
 
+        /// <summary>
+        /// Singleton instance of the remote player proxy.
+        /// </summary>
         public static RemotePlayerProxy Instance { get; private set; }
 
+        /// <summary>Whether the remote player has the Shadow Ward skill active.</summary>
         public bool RemoteHasShadowWard { get; set; }
+        /// <summary>Whether the remote player has the Forest Spirit Ward skill active.</summary>
         public bool RemoteHasForestSpiritWard { get; set; }
+        /// <summary>Whether the remote player has the Friend of the Forest skill active.</summary>
         public bool RemoteHasFriendOfTheForest { get; set; }
+        /// <summary>Whether the remote player has the Enemy of the Forest skill active.</summary>
         public bool RemoteHasEnemyOfTheForest { get; set; }
+        /// <summary>Whether the remote player is currently running.</summary>
         public bool RemoteRunning { get; set; }
+        /// <summary>The last received locomotion state for the remote player.</summary>
         public SecondPlayerAnimController.LocomotionState RemoteLocomotion { get; set; }
 
         /// <summary>Fires when a footstep animation event occurs. Parameter is true for running, false for walking.</summary>
         public event Action<bool> OnFootstep;
 
+        /// <summary>
+        /// Creates the remote player GameObject, wires components, and returns the proxy component.
+        /// </summary>
         public static RemotePlayerProxy Spawn(ManualLogSource log)
         {
             Player source = PlayerControlRouter.MainPlayer ?? Player.Instance;
@@ -117,6 +134,9 @@ namespace DarkwoodMultiplayer.Players
             log?.LogInfo($"RemoteProxy: enabled {enabledCount} colliders ({triggerCount} triggers) — non-kinematic mass=2.5 drag=0");
         }
 
+        /// <summary>
+        /// Applies a network state snapshot to the proxy (position, animation, vault state).
+        /// </summary>
         public void ApplyNetworkState(PlayerStateNet state)
         {
             _targetPosition = state.Position;
@@ -184,6 +204,7 @@ namespace DarkwoodMultiplayer.Players
             }
         }
 
+        // Throttled log counter to avoid spamming the log file
         private static int _pushCollideCount;
 
         private void OnCollisionStay(Collision collision)
@@ -236,9 +257,11 @@ namespace DarkwoodMultiplayer.Players
             // Use velocity so Unity physics naturally handles entity pushing
             _rb.velocity = delta / Time.fixedDeltaTime;
 
+            // Decay push force gradually
             _pushOffset = Vector3.Lerp(_pushOffset, Vector3.zero, Time.fixedDeltaTime * 10f);
         }
 
+        // Forces shadow to always point straight down for correct 2.5D appearance
         private void LateUpdate()
         {
             if (_shadow != null)
@@ -246,15 +269,26 @@ namespace DarkwoodMultiplayer.Players
         }
     }
 
+    /// <summary>
+    /// Snapshot of a remote player's position and animation state sent over the network.
+    /// </summary>
     public struct PlayerStateNet
     {
+        /// <summary>World position.</summary>
         public Vector3 Position;
+        /// <summary>Locomotion state (Idle/Walk/Run).</summary>
         public SecondPlayerAnimController.LocomotionState Locomotion;
+        /// <summary>Whether the sprite is flipped horizontally.</summary>
         public bool FlipX;
+        /// <summary>Legs object Y rotation (quantised to short).</summary>
         public short LegFacingY;
+        /// <summary>Whether legs are reversed (walking backwards).</summary>
         public bool ReverseLegs;
+        /// <summary>Torso object Y rotation (quantised to short).</summary>
         public short TorsoFacingY;
+        /// <summary>Name of the currently playing torso clip, or null/empty for idle.</summary>
         public string TorsoClip;
+        /// <summary>Name of the currently playing legs clip, or null/empty for idle.</summary>
         public string LegsClip;
     }
 }

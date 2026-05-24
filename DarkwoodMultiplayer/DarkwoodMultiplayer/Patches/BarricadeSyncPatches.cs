@@ -5,12 +5,17 @@ using UnityEngine;
 
 namespace DarkwoodMultiplayer.Patches
 {
+    /// <summary>
+    /// Shared helper methods for barricade event synchronization (build,
+    /// damage, destroy) between host and clients.
+    /// </summary>
     internal static class BarricadeSyncHelpers
     {
         internal static void SendBarricadeEvent(Vector3 pos, bool isWindow, BarricadeAction action, int health, bool playerBarricade)
         {
             if (LanNetworkManager.IsApplyingRemoteState) return;
             if (ModRuntime.Network == null || !ModRuntime.Network.IsConnected) return;
+            // Round position to avoid floating-point mismatch between peers
             Vector3 key = new Vector3((float)System.Math.Round(pos.x, 1), (float)System.Math.Round(pos.y, 1), (float)System.Math.Round(pos.z, 1));
             var msg = new BarricadeEventMessage
             {
@@ -24,6 +29,9 @@ namespace DarkwoodMultiplayer.Patches
         }
     }
 
+    /// <summary>
+    /// Syncs barricade build event on doors to remote clients.
+    /// </summary>
     [HarmonyPatch(typeof(Door), "barricade", new[] { typeof(bool) })]
     public static class DoorBarricadePatch
     {
@@ -37,6 +45,9 @@ namespace DarkwoodMultiplayer.Patches
         }
     }
 
+    /// <summary>
+    /// Syncs barricade destruction on doors to remote clients.
+    /// </summary>
     [HarmonyPatch(typeof(Door), "destroyBarricade", new[] { typeof(bool) })]
     public static class DoorDestroyBarricadePatch
     {
@@ -47,6 +58,9 @@ namespace DarkwoodMultiplayer.Patches
         }
     }
 
+    /// <summary>
+    /// Syncs barricade build event on windows to remote clients.
+    /// </summary>
     [HarmonyPatch(typeof(Window), "barricade", new[] { typeof(int), typeof(bool) })]
     public static class WindowBarricadePatch
     {
@@ -60,6 +74,9 @@ namespace DarkwoodMultiplayer.Patches
         }
     }
 
+    /// <summary>
+    /// Syncs barricade destruction on windows to remote clients.
+    /// </summary>
     [HarmonyPatch(typeof(Window), "destroyBarricade", new[] { typeof(bool) })]
     public static class WindowDestroyBarricadePatch
     {
@@ -70,6 +87,10 @@ namespace DarkwoodMultiplayer.Patches
         }
     }
 
+    /// <summary>
+    /// Syncs barricade damage/health changes on doors to remote clients
+    /// after getHit is called (including destruction when health reaches zero).
+    /// </summary>
     [HarmonyPatch(typeof(Door), "getHit", new[] { typeof(int), typeof(Transform), typeof(bool), typeof(bool) })]
     public static class DoorGetHitPatch
     {
@@ -85,6 +106,10 @@ namespace DarkwoodMultiplayer.Patches
         }
     }
 
+    /// <summary>
+    /// Syncs barricade damage/health changes on windows to remote clients
+    /// after getHit is called (including destruction when health reaches zero).
+    /// </summary>
     [HarmonyPatch(typeof(Window), "getHit", new[] { typeof(int), typeof(Transform), typeof(bool) })]
     public static class WindowGetHitPatch
     {

@@ -4,16 +4,36 @@ using UnityEngine;
 
 namespace DarkwoodMultiplayer.Players
 {
+    /// <summary>
+    /// Whether the clone will act as a remote proxy (netcode driven) or a local second player (full Player component).
+    /// </summary>
     public enum PlayerCloneKind
     {
+        /// <summary>Networked proxy with stripped gameplay components.</summary>
         Remote,
+        /// <summary>Local split-screen player with full Player mechanics.</summary>
         LocalSecond
     }
 
+    /// <summary>
+    /// Factory for cloning a Player GameObject into either a Remote or LocalSecond proxy.
+    /// </summary>
     public static class PlayerProxyBuilder
     {
+        /// <summary>
+        /// True while a LocalSecond clone is being instantiated. Used by patched methods to skip registerMe side-effects.
+        /// </summary>
         public static bool IsSpawningCoopClone { get; private set; }
 
+        /// <summary>
+        /// Creates a clone of sourcePlayer, strips unwanted components, and attaches the appropriate controller.
+        /// </summary>
+        /// <param name="sourcePlayer">The Player to copy.</param>
+        /// <param name="objectName">Name for the new GameObject.</param>
+        /// <param name="positionOffset">Spawn offset relative to source.</param>
+        /// <param name="kind">Remote or LocalSecond.</param>
+        /// <param name="log">Log output.</param>
+        /// <returns>The cloned GameObject, or null on failure.</returns>
         public static GameObject CreatePlayerClone(
             Player sourcePlayer,
             string objectName,
@@ -141,6 +161,9 @@ namespace DarkwoodMultiplayer.Players
             log?.LogInfo("Local co-op second player ready (full Player mechanics).");
         }
 
+        /// <summary>
+        /// Destroys gameplay-specific components on the clone based on its kind.
+        /// </summary>
         public static void StripGameplayComponents(GameObject clone, PlayerCloneKind kind)
         {
             if (kind == PlayerCloneKind.Remote)
@@ -177,6 +200,9 @@ namespace DarkwoodMultiplayer.Players
             }
         }
 
+        /// <summary>
+        /// Disables or destroys vision/lighting components on the clone.
+        /// </summary>
         public static void CleanupVision(GameObject root, PlayerCloneKind kind)
         {
             if (kind == PlayerCloneKind.Remote)
@@ -203,6 +229,9 @@ namespace DarkwoodMultiplayer.Players
             PlayerVisionController.From(root)?.SetAllVisionDisabled();
         }
 
+        /// <summary>
+        /// Destroys all Unity Light components on the clone (they conflict with Darkwood's Light2D system).
+        /// </summary>
         public static void RemoveUnityLights(GameObject root)
         {
             foreach (Light light in root.GetComponentsInChildren<Light>(true))

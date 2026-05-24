@@ -7,6 +7,11 @@ using UnityEngine;
 
 namespace DarkwoodMultiplayer.Patches
 {
+    /// <summary>
+    /// On the client, when the local player hits the remote proxy with
+    /// a melee weapon, sends a FriendlyFireMessage to the host instead
+    /// of applying damage locally (host is authoritative for proxy damage).
+    /// </summary>
     [HarmonyPatch(typeof(MeleeSensor), "OnTriggerEnter", new[] { typeof(Collider) })]
     public static class ClientFriendlyFirePatch
     {
@@ -42,6 +47,12 @@ namespace DarkwoodMultiplayer.Patches
         }
     }
 
+    /// <summary>
+    /// On the client, when the local player hits any target (Character,
+    /// Door, Window, Item) with a melee weapon, sends the attack to the
+    /// host for authoritative damage processing and broadcasts the hit
+    /// sound to other clients.
+    /// </summary>
     [HarmonyPatch(typeof(MeleeSensor), "OnTriggerEnter", new[] { typeof(Collider) })]
     public static class ClientMeleeSensorPatch
     {

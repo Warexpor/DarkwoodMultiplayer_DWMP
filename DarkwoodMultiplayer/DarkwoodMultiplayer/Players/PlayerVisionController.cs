@@ -26,6 +26,9 @@ namespace DarkwoodMultiplayer.Players
             BindLights();
         }
 
+        /// <summary>
+        /// Creates a controller for the given root GameObject, or null if root is null.
+        /// </summary>
         public static PlayerVisionController From(GameObject root)
         {
             return root == null ? null : new PlayerVisionController(root);
@@ -72,12 +75,18 @@ namespace DarkwoodMultiplayer.Players
                 _shadow.SetActive(enabled);
         }
 
+        /// <summary>
+        /// Enables or disables the Flashlight GameObject.
+        /// </summary>
         public void SetFlashlightEnabled(bool enabled)
         {
             if (_flashlight != null)
                 _flashlight.gameObject.SetActive(enabled);
         }
 
+        /// <summary>
+        /// Disables both the vision cone and the flashlight.
+        /// </summary>
         public void SetAllVisionDisabled()
         {
             SetVisionConeEnabled(false);
@@ -85,7 +94,7 @@ namespace DarkwoodMultiplayer.Players
         }
 
         /// <summary>
-        /// Copies live FOV cone angles/radius from another player (after getFOVAngle has run on the source).
+        /// Copies live FOV cone angles/radius from another PlayerVisionController (after getFOVAngle has run on the source).
         /// </summary>
         public void SyncFovConeFrom(PlayerVisionController source)
         {
@@ -98,6 +107,9 @@ namespace DarkwoodMultiplayer.Players
             CopyLightCone(_lightDot, source._lightDot);
         }
 
+        /// <summary>
+        /// Refreshes the main player's FOV angles then copies them to this controller's lights.
+        /// </summary>
         public void SyncFovConeFrom(Player main)
         {
             if (main == null)
@@ -110,6 +122,9 @@ namespace DarkwoodMultiplayer.Players
             CopyLightCone(_lightDot, FindLight(main.transform, "PlayerLightDot"));
         }
 
+        /// <summary>
+        /// Invokes the private getFOVAngle method so the main player's FOV cone values are up-to-date before syncing.
+        /// </summary>
         public static void RefreshMainFov(Player main)
         {
             if (main == null || GetFovAngleMethod == null)
@@ -118,6 +133,9 @@ namespace DarkwoodMultiplayer.Players
             GetFovAngleMethod.Invoke(main, null);
         }
 
+        /// <summary>
+        /// Returns true if the main player's Flashlight child GameObject is active.
+        /// </summary>
         public static bool IsFlashlightActiveOn(Player main)
         {
             if (main == null)

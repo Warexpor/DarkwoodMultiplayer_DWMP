@@ -1,62 +1,36 @@
 using BepInEx.Configuration;
-using UnityEngine;
 
 namespace DarkwoodMultiplayer.Config
 {
+    /// <summary>
+    /// Central configuration binding for the Darkwood Multiplayer mod.
+    /// All settings are read from the BepInEx config file at startup.
+    /// </summary>
     public static class ModConfig
     {
-        public static ConfigEntry<PlayMode> Mode { get; private set; }
-        public static ConfigEntry<KeyCode> SpawnLocalPlayerKey { get; private set; }
-        public static ConfigEntry<KeyCode> SwitchControlKey { get; private set; }
-        public static ConfigEntry<bool> AutoSpawnLocalSecondPlayer { get; private set; }
-        public static ConfigEntry<bool> UseArrowKeysForSecondPlayer { get; private set; }
-        public static ConfigEntry<float> LocalMaxSpeed { get; private set; }
-        public static ConfigEntry<float> LocalAcceleration { get; private set; }
-        public static ConfigEntry<float> LocalFriction { get; private set; }
+        /// <summary>IP address or hostname of the host to connect to.</summary>
+        public static ConfigEntry<string> ConnectAddress { get; private set; }
 
-        public static bool IsLanMode => Mode.Value == PlayMode.LAN;
-        public static bool IsLocalMode => Mode.Value == PlayMode.Local;
+        /// <summary>UDP port used for the LAN connection.</summary>
+        public static ConfigEntry<int> ConnectPort { get; private set; }
 
+        /// <summary>
+        /// Register all config entries with the BepInEx configuration system.
+        /// Called once during mod startup (<see cref="ModRuntime.Start"/>).
+        /// </summary>
         public static void Bind(ConfigFile config)
         {
-            Mode = config.Bind(
-                "General",
-                "PlayMode",
-                PlayMode.Local,
-                "LAN = multiplayer over network. Local = spawn a second player on this PC for animation/movement testing.");
+            ConnectAddress = config.Bind(
+                "Network",
+                "ConnectAddress",
+                "127.0.0.1",
+                "Default IP address shown in the connect field.");
 
-            SpawnLocalPlayerKey = config.Bind(
-                "Local",
-                "SpawnSecondPlayerKey",
-                KeyCode.F8,
-                "Spawn the local test second player (Local mode only). Set to None to use GUI menu only.");
-
-            SwitchControlKey = config.Bind(
-                "Local",
-                "SwitchControlKey",
-                KeyCode.F9,
-                "Switch control between main player and local second player. Set to None to use GUI menu only.");
-
-            AutoSpawnLocalSecondPlayer = config.Bind(
-                "Local",
-                "AutoSpawnSecondPlayer",
-                false,
-                "Automatically spawn the second player when entering the game in Local mode.");
-
-            UseArrowKeysForSecondPlayer = config.Bind(
-                "Local",
-                "UseArrowKeysForSecond",
-                false,
-                "Deprecated — local second player always uses WASD + mouse look.");
-
-            LocalMaxSpeed = config.Bind(
-                "Local",
-                "MaxSpeed",
-                65f,
-                "Top speed for local second player (game walk velocity is typically ~50-70).");
-
-            LocalAcceleration = config.Bind("Local", "Acceleration", 220f, "Acceleration for local second player.");
-            LocalFriction = config.Bind("Local", "Friction", 200f, "Friction for local second player.");
+            ConnectPort = config.Bind(
+                "Network",
+                "ConnectPort",
+                PluginInfo.DefaultPort,
+                "Default UDP port for LAN connections.");
         }
     }
 }

@@ -4,6 +4,10 @@ using UnityEngine;
 
 namespace DarkwoodMultiplayer.Networking
 {
+    /// <summary>
+    /// Periodically snapshots nearby entity positions and states, then broadcasts them
+    /// to the connected client over an unreliable channel.
+    /// </summary>
     public static class EntityStateBroadcastService
     {
         private static NetPeer _peer;
@@ -12,8 +16,12 @@ namespace DarkwoodMultiplayer.Networking
 
         private static EntitySnapshotNet[] _buffer = new EntitySnapshotNet[128];
 
+        /// <summary>Sets the network peer to broadcast to.</summary>
         public static void SetPeer(NetPeer peer) => _peer = peer;
 
+        /// <summary>
+        /// Called every frame; accumulates time and sends a snapshot when the interval elapses.
+        /// </summary>
         public static void Tick()
         {
             if (_peer == null || _peer.ConnectionState != ConnectionState.Connected)
@@ -27,6 +35,10 @@ namespace DarkwoodMultiplayer.Networking
             SendSnapshot();
         }
 
+        /// <summary>
+        /// Collects a snapshot of all tracked entities within range of either player
+        /// and sends it to the connected peer as an unreliable packet.
+        /// </summary>
         private static void SendSnapshot()
         {
             Character[] all = CharacterTracker.GetAll();
@@ -40,6 +52,7 @@ namespace DarkwoodMultiplayer.Networking
             int count = 0;
 
             Vector3 hostPos = Player.Instance != null ? Player.Instance.transform.position : Vector3.zero;
+            // 700-unit radius around host or remote player to cull distant entities and save bandwidth
             float maxDistSq = 700f * 700f;
 
             for (int i = 0; i < all.Length && count < maxEntities; i++)
@@ -49,6 +62,7 @@ namespace DarkwoodMultiplayer.Networking
 
                 Vector3 cPos = c.transform.position;
                 float d1 = Vector3.SqrMagnitude(cPos - hostPos);
+                // Skip entities too far from both the host and the remote player
                 if (d1 > maxDistSq && (!PlayerPositionManager.HasRemotePlayer || Vector3.SqrMagnitude(cPos - PlayerPositionManager.RemotePlayerPosition) > maxDistSq))
                     continue;
 
@@ -58,6 +72,7 @@ namespace DarkwoodMultiplayer.Networking
                 Vector3 rot = c.transform.eulerAngles;
 
                 string entityName = c.name;
+                // Strip "(Clone)" suffix added by Unity when instantiating prefabs
                 if (entityName.EndsWith("(Clone)"))
                     entityName = entityName.Substring(0, entityName.Length - 7);
 
@@ -91,6 +106,7 @@ namespace DarkwoodMultiplayer.Networking
             _peer.Send(writer.CopyData(), DeliveryMethod.Unreliable);
 
             _sendCount++;
+            // Log every 10th send for low-frequency diagnostics without spamming
             if (_sendCount % 10 == 0)
             {
                 System.Text.StringBuilder sb = new System.Text.StringBuilder();
@@ -112,6 +128,7 @@ namespace DarkwoodMultiplayer.Networking
 
         private static int _sendCount;
 
+        /// <summary>Stops broadcasting and clears the peer reference.</summary>
         public static void Stop()
         {
             _peer = null;

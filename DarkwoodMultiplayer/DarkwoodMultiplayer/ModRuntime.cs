@@ -2,21 +2,30 @@ using BepInEx.Configuration;
 using BepInEx.Logging;
 using DarkwoodMultiplayer.Config;
 using DarkwoodMultiplayer.Networking;
-using DarkwoodMultiplayer.Players;
 using HarmonyLib;
 using UnityEngine;
 
 namespace DarkwoodMultiplayer
 {
+    /// <summary>
+    /// Entry-point runtime for the Darkwood Multiplayer mod.
+    /// Owns the Harmony patcher, the network manager, and the in-game UI.
+    /// </summary>
     public static class ModRuntime
     {
+        /// <summary>BepInEx logger, shared across all systems.</summary>
         public static ManualLogSource Log;
+
+        /// <summary>The LAN network manager singleton (host or client).</summary>
         public static LanNetworkManager Network { get; private set; }
-        public static LocalSecondPlayerManager LocalSecondPlayer { get; private set; }
 
         private static bool _running;
         private static Harmony _harmony;
 
+        /// <summary>
+        /// Called by <see cref="DarkwoodMultiplayerEntry.Awake"/> once on plugin load.
+        /// Binds config, applies all Harmony patches, and boots the runtime GameObject.
+        /// </summary>
         public static void Start(ManualLogSource log, ConfigFile config)
         {
             Log = log;
@@ -31,18 +40,7 @@ namespace DarkwoodMultiplayer
                 Log.LogInfo("================================================");
                 Log.LogInfo("  " + PluginInfo.Name + " v" + PluginInfo.Version);
                 Log.LogInfo("  Config: BepInEx/config/" + PluginInfo.Guid + ".cfg");
-                Log.LogInfo("  PlayMode = " + ModConfig.Mode.Value);
-                if (ModConfig.IsLocalMode)
-                {
-                    if (ModConfig.SwitchControlKey.Value != KeyCode.None)
-                        Log.LogInfo("  Local: " + ModConfig.SwitchControlKey.Value + " = switch player");
-                    if (ModConfig.SpawnLocalPlayerKey.Value != KeyCode.None)
-                        Log.LogInfo("  Local: " + ModConfig.SpawnLocalPlayerKey.Value + " = spawn second player");
-                }
-                else
-                {
-                    Log.LogInfo("  LAN: M / F2 / F3 / Home = menu");
-                }
+                Log.LogInfo("  Press M / F2 / F3 / Home to open the multiplayer menu");
                 Log.LogInfo("================================================");
 
                 EnsureRunning();
@@ -53,6 +51,10 @@ namespace DarkwoodMultiplayer
             }
         }
 
+        /// <summary>
+        /// Ensure the persistent runtime GameObject exists with all required
+        /// components (network manager, menu).
+        /// </summary>
         public static void EnsureRunning()
         {
             if (_running)
@@ -64,11 +66,11 @@ namespace DarkwoodMultiplayer
             Object.DontDestroyOnLoad(root);
 
             Network = root.AddComponent<LanNetworkManager>();
-            LocalSecondPlayer = root.AddComponent<LocalSecondPlayerManager>();
 
             MultiplayerMenu.EnsureExists();
         }
 
+        /// <summary>Stop the network and unpatch Harmony (called on mod unload).</summary>
         public static void Stop()
         {
             Network?.StopNetwork();

@@ -1,10 +1,12 @@
-using DarkwoodMultiplayer.Config;
 using DarkwoodMultiplayer.Networking;
-using DarkwoodMultiplayer.Players;
 using UnityEngine;
 
 namespace DarkwoodMultiplayer
 {
+    /// <summary>
+    /// In-game IMGUI overlay for LAN multiplayer: host, connect, disconnect.
+    /// Toggle with M, F2, F3, Home, or Insert.
+    /// </summary>
     public sealed class MultiplayerMenu : MonoBehaviour
     {
         private static MultiplayerMenu _instance;
@@ -17,16 +19,17 @@ namespace DarkwoodMultiplayer
         private bool _windowRectInitialized;
 
         private LanNetworkManager Network => ModRuntime.Network;
-        private LocalSecondPlayerManager Local => ModRuntime.LocalSecondPlayer;
 
         private static float UiScale => Mathf.Clamp(Screen.height / 900f, 1f, 2f);
 
+        /// <summary>Toggle menu visibility.</summary>
         public static void ToggleVisible()
         {
             if (_instance != null)
                 _instance._visible = !_instance._visible;
         }
 
+        /// <summary>Ensure the persistent menu GameObject exists.</summary>
         public static void EnsureExists()
         {
             if (_instance != null)
@@ -84,33 +87,6 @@ namespace DarkwoodMultiplayer
 
             _scroll = GUILayout.BeginScrollView(_scroll, GUILayout.ExpandHeight(true));
 
-            GUILayout.Label("Mode (config): " + ModConfig.Mode.Value, GUILayout.ExpandWidth(true));
-
-            if (ModConfig.IsLocalMode)
-                DrawLocalModeUi();
-            else
-                DrawLanModeUi(innerWidth);
-
-            GUILayout.Space(12f);
-            GUILayout.Label("Config file: BepInEx/config/" + PluginInfo.Guid + ".cfg", GUILayout.ExpandWidth(true));
-            GUILayout.Label("Change PlayMode to LAN or Local, then restart the game.", GUILayout.ExpandWidth(true));
-            GUILayout.Label("Menu toggle: F2, F3, Home, or Insert", GUILayout.ExpandWidth(true));
-
-            GUILayout.EndScrollView();
-
-            if (Event.current.type == EventType.Repaint)
-            {
-                float contentHeight = GUILayoutUtility.GetLastRect().yMax + 48f;
-                float scaledHeight = contentHeight * UiScale;
-                if (scaledHeight > _windowRect.height)
-                    _windowRect.height = Mathf.Min(scaledHeight, Screen.height * 0.85f);
-            }
-
-            GUI.DragWindow(new Rect(0f, 0f, 10000f, 24f));
-        }
-
-        private void DrawLanModeUi(float innerWidth)
-        {
             GUILayout.Label("LAN co-op", GUILayout.ExpandWidth(true));
             GUILayout.Label("Status: " + (Network != null ? Network.StatusText : "No network"), GUILayout.ExpandWidth(true));
 
@@ -143,32 +119,22 @@ namespace DarkwoodMultiplayer
                 if (GUILayout.Button("Disconnect", GUILayout.Height(32f)))
                     Network.StopNetwork();
             }
-        }
 
-        private void DrawLocalModeUi()
-        {
-            string control = Local != null ? Local.Active.ToString() : "Main";
-            string second = Local != null && Local.HasSecondPlayer ? "spawned" : "not spawned";
+            GUILayout.Space(12f);
+            GUILayout.Label("Config file: BepInEx/config/" + PluginInfo.Guid + ".cfg", GUILayout.ExpandWidth(true));
+            GUILayout.Label("Menu toggle: M, F2, F3, Home, or Insert", GUILayout.ExpandWidth(true));
 
-            GUILayout.Label("Local co-op (split control)", GUILayout.ExpandWidth(true));
-            GUILayout.Label("Controlling: " + control, GUILayout.ExpandWidth(true));
-            GUILayout.Label("Second player: " + second, GUILayout.ExpandWidth(true));
+            GUILayout.EndScrollView();
 
-            GUILayout.Space(8f);
-            GUILayout.Label(ModConfig.SwitchControlKey.Value + " = switch Main / Second", GUILayout.ExpandWidth(true));
-            GUILayout.Label(ModConfig.SpawnLocalPlayerKey.Value + " = spawn second player", GUILayout.ExpandWidth(true));
+            if (Event.current.type == EventType.Repaint)
+            {
+                float contentHeight = GUILayoutUtility.GetLastRect().yMax + 48f;
+                float scaledHeight = contentHeight * UiScale;
+                if (scaledHeight > _windowRect.height)
+                    _windowRect.height = Mathf.Min(scaledHeight, Screen.height * 0.85f);
+            }
 
-            GUILayout.Label("Second player: full game mechanics (inventory, interact, combat)", GUILayout.ExpandWidth(true));
-            GUILayout.Label("FOV cone follows active player; flashlight if equipped", GUILayout.ExpandWidth(true));
-            GUILayout.Label("While on Main: normal game controls", GUILayout.ExpandWidth(true));
-
-            GUILayout.Space(10f);
-
-            if (GUILayout.Button("Switch control (" + ModConfig.SwitchControlKey.Value + ")", GUILayout.Height(32f)))
-                Local?.SwitchControl();
-
-            if (GUILayout.Button("Spawn second player (" + ModConfig.SpawnLocalPlayerKey.Value + ")", GUILayout.Height(32f)))
-                Local?.SpawnSecondPlayer();
+            GUI.DragWindow(new Rect(0f, 0f, 10000f, 24f));
         }
     }
 }

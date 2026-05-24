@@ -6,6 +6,12 @@ using UnityEngine;
 
 namespace DarkwoodMultiplayer.Patches
 {
+    /// <summary>
+    /// Intercepts MeleeSensor.OnTriggerEnter on the host when the hit
+    /// target is the remote proxy. Sends a DamagePlayerMessage to the
+    /// client and drains host weapon durability. Skips vanilla hit logic
+    /// since the proxy is not a real Player and would be ignored.
+    /// </summary>
     [HarmonyPatch(typeof(MeleeSensor), "OnTriggerEnter", new[] { typeof(Collider) })]
     public static class HostMeleeSensorPatch
     {

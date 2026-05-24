@@ -1,18 +1,19 @@
-using DarkwoodMultiplayer.Config;
 using DarkwoodMultiplayer.Networking;
 using HarmonyLib;
-using UnityEngine;
 
 namespace DarkwoodMultiplayer.Patches
 {
+    /// <summary>
+    /// On the CLIENT side, most AI routines must be suppressed because entity
+    /// positions are driven by interpolation from host snapshots, not local AI.
+    /// These patches return false (skip original) for the client role.
+    /// </summary>
     [HarmonyPatch(typeof(Character), "Update")]
     public static class ClientCharacterUpdatePatch
     {
+        /// <summary>Skip Character.Update on the client (AI is host-authoritative).</summary>
         private static bool Prefix(Character __instance)
         {
-            if (!ModConfig.IsLanMode)
-                return true;
-
             if (ModRuntime.Network == null || ModRuntime.Network.Role != NetworkRole.Client)
                 return true;
 
@@ -28,7 +29,6 @@ namespace DarkwoodMultiplayer.Patches
     {
         private static bool Prefix()
         {
-            if (!ModConfig.IsLanMode) return true;
             if (ModRuntime.Network == null || ModRuntime.Network.Role != NetworkRole.Client) return true;
             return false;
         }
@@ -39,7 +39,6 @@ namespace DarkwoodMultiplayer.Patches
     {
         private static bool Prefix()
         {
-            if (!ModConfig.IsLanMode) return true;
             if (ModRuntime.Network == null || ModRuntime.Network.Role != NetworkRole.Client) return true;
             return false;
         }
@@ -50,7 +49,6 @@ namespace DarkwoodMultiplayer.Patches
     {
         private static bool Prefix()
         {
-            if (!ModConfig.IsLanMode) return true;
             if (ModRuntime.Network == null || ModRuntime.Network.Role != NetworkRole.Client) return true;
             return false;
         }
@@ -61,7 +59,6 @@ namespace DarkwoodMultiplayer.Patches
     {
         private static bool Prefix()
         {
-            if (!ModConfig.IsLanMode) return true;
             if (ModRuntime.Network == null || ModRuntime.Network.Role != NetworkRole.Client) return true;
             return false;
         }
@@ -72,7 +69,6 @@ namespace DarkwoodMultiplayer.Patches
     {
         private static bool Prefix()
         {
-            if (!ModConfig.IsLanMode) return true;
             if (ModRuntime.Network == null || ModRuntime.Network.Role != NetworkRole.Client) return true;
             return false;
         }
@@ -83,7 +79,6 @@ namespace DarkwoodMultiplayer.Patches
     {
         private static bool Prefix()
         {
-            if (!ModConfig.IsLanMode) return true;
             if (ModRuntime.Network == null || ModRuntime.Network.Role != NetworkRole.Client) return true;
             return false;
         }
@@ -94,7 +89,6 @@ namespace DarkwoodMultiplayer.Patches
     {
         private static bool Prefix()
         {
-            if (!ModConfig.IsLanMode) return true;
             if (ModRuntime.Network == null || ModRuntime.Network.Role != NetworkRole.Client) return true;
             return false;
         }
@@ -105,7 +99,6 @@ namespace DarkwoodMultiplayer.Patches
     {
         private static bool Prefix()
         {
-            if (!ModConfig.IsLanMode) return true;
             if (ModRuntime.Network == null || ModRuntime.Network.Role != NetworkRole.Client) return true;
             return false;
         }
@@ -116,7 +109,6 @@ namespace DarkwoodMultiplayer.Patches
     {
         private static bool Prefix()
         {
-            if (!ModConfig.IsLanMode) return true;
             if (ModRuntime.Network == null || ModRuntime.Network.Role != NetworkRole.Client) return true;
             return false;
         }
@@ -127,7 +119,6 @@ namespace DarkwoodMultiplayer.Patches
     {
         private static bool Prefix()
         {
-            if (!ModConfig.IsLanMode) return true;
             if (ModRuntime.Network == null || ModRuntime.Network.Role != NetworkRole.Client) return true;
             return false;
         }
@@ -138,7 +129,6 @@ namespace DarkwoodMultiplayer.Patches
     {
         private static bool Prefix()
         {
-            if (!ModConfig.IsLanMode) return true;
             if (ModRuntime.Network == null || ModRuntime.Network.Role != NetworkRole.Client) return true;
             return false;
         }

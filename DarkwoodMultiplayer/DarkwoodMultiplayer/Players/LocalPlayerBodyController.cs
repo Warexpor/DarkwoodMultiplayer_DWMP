@@ -2,6 +2,9 @@ using UnityEngine;
 
 namespace DarkwoodMultiplayer.Players
 {
+    /// <summary>
+    /// Manages physics and immobilisation state for the local second player's body.
+    /// </summary>
     public sealed class LocalPlayerBodyController : MonoBehaviour
     {
         private Transform _transform;
@@ -11,6 +14,9 @@ namespace DarkwoodMultiplayer.Players
         private Player _player;
         private bool _wasImmobilised;
 
+        /// <summary>
+        /// Copies rigidbody properties from the main player and caches component references.
+        /// </summary>
         public void SetupFromMain(Player main)
         {
             _transform = transform;
@@ -71,6 +77,7 @@ namespace DarkwoodMultiplayer.Players
                 _torsoAnimator.Play("Idle");
         }
 
+        // Keeps the clone at the correct Y for Darkwood's 2.5D perspective
         private void ClampHeight()
         {
             float yPos = Core.getYpos(PosType.player, randomize: false);

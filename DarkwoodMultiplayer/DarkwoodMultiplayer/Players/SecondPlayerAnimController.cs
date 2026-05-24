@@ -1,23 +1,33 @@
-using BepInEx.Logging;
 using UnityEngine;
 
 namespace DarkwoodMultiplayer.Players
 {
+    /// <summary>
+    /// Drives torso and leg animations for the second player (local co-op or remote proxy) based on network snapshots.
+    /// </summary>
     public sealed class SecondPlayerAnimController : MonoBehaviour
     {
+        /// <summary>
+        /// Movement state used to select the correct animation set.
+        /// </summary>
         public enum LocomotionState : byte
         {
+            /// <summary>Standing still.</summary>
             Idle = 0,
+            /// <summary>Walking.</summary>
             Walk = 1,
+            /// <summary>Running.</summary>
             Run = 2
         }
 
+        // Blend speed for slerping legs rotation back to body-aligned standing pose
         private const float LegBlendSpeed = 15f;
 
         private tk2dSpriteAnimator _torsoAnimator;
         private tk2dSpriteAnimator _legsAnimator;
         private tk2dBaseSprite _torsoSprite;
 
+        // Fallback animation library used when the clone lacks certain torso clips
         private tk2dSpriteAnimation _noneAnimsLib;
         private string _currentTorsoClip;
         private LocomotionState _state = LocomotionState.Idle;
@@ -26,7 +36,9 @@ namespace DarkwoodMultiplayer.Players
         private bool _networkReverseLegs;
         private bool _hasNetworkLegFacing;
 
+        /// <summary>Current locomotion state.</summary>
         public LocomotionState State => _state;
+        /// <summary>Current horizontal flip state.</summary>
         public bool FlipX => _flipX;
 
         private void Awake()
@@ -57,6 +69,7 @@ namespace DarkwoodMultiplayer.Players
                 ModRuntime.Log?.LogInfo("SecondPlayerAnimController: torso + legs animators ready.");
         }
 
+        // Stops legs animation when the feet-neurtral event fires during idle
         private void OnLegsAnimationEvent(tk2dSpriteAnimator animator, tk2dSpriteAnimationClip clip, int frameNum)
         {
             if (_state != LocomotionState.Idle)
@@ -68,6 +81,7 @@ namespace DarkwoodMultiplayer.Players
             }
         }
 
+        // Continuously blend legs back to standing rotation when idling
         private void LateUpdate()
         {
             if (_state == LocomotionState.Idle && _legsAnimator != null)
@@ -76,6 +90,9 @@ namespace DarkwoodMultiplayer.Players
             }
         }
 
+        /// <summary>
+        /// Applies a full animation snapshot from the network, updating torso, legs, facing, and flip.
+        /// </summary>
         public void ApplyNetworkSnapshot(
             LocomotionState state,
             bool flipX,
@@ -121,6 +138,7 @@ namespace DarkwoodMultiplayer.Players
             }
             else if (wasMoving && !isMoving && _legsAnimator != null && _legsAnimator.Playing)
             {
+                // Transitioning from moving to idle — let the legs finish their current cycle naturally
             }
 
             if (state == LocomotionState.Walk)
@@ -129,6 +147,9 @@ namespace DarkwoodMultiplayer.Players
                 AlignLegsToFacing(legFacingY, snapRunToBody: true);
         }
 
+        /// <summary>
+        /// Convenience overload that applies only locomotion state and flip, keeping existing facing.
+        /// </summary>
         public void ApplySnapshot(LocomotionState state, bool flipX)
         {
             ApplyNetworkSnapshot(state, flipX, (short)transform.eulerAngles.y, false, (short)transform.eulerAngles.y, null, null);
@@ -165,6 +186,9 @@ namespace DarkwoodMultiplayer.Players
             }
         }
 
+        /// <summary>
+        /// Smoothly rotates legs back to align with the body rotation when idling.
+        /// </summary>
         public void ResetLegsToStanding()
         {
             if (_legsAnimator == null)
@@ -199,6 +223,7 @@ namespace DarkwoodMultiplayer.Players
 
             if (_torsoAnimator.GetClipByName(clipName) == null)
             {
+                // Fall back to the "None" animation library if the clone doesn't have the clip
                 if (_noneAnimsLib != null && _noneAnimsLib.GetClipByName(clipName) != null)
                 {
                     _torsoAnimator.Library = _noneAnimsLib;
@@ -223,6 +248,7 @@ namespace DarkwoodMultiplayer.Players
 
             if (_legsAnimator.GetClipByName(clipName) == null)
             {
+                // Fall back to normal walk animation if reverse walk clip is missing
                 if (clipName == "LegsWalkReverse" && _legsAnimator.GetClipByName("LegsWalk") != null)
                     clipName = "LegsWalk";
                 else

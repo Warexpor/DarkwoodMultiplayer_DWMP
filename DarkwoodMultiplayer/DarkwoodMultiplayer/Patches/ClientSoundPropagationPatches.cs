@@ -5,6 +5,11 @@ using UnityEngine;
 
 namespace DarkwoodMultiplayer.Patches
 {
+    /// <summary>
+    /// Broadcasts gunshot sound to other clients when the local player
+    /// fires a weapon, using the weapon's configured sound range and
+    /// marking it as a dangerous/gunshot sound for AI reaction.
+    /// </summary>
     [HarmonyPatch(typeof(Player), "fireWeapon")]
     public static class ClientFireWeaponSoundPatch
     {
@@ -34,6 +39,11 @@ namespace DarkwoodMultiplayer.Patches
         }
     }
 
+    /// <summary>
+    /// Broadcasts a scare (loud noise) to other clients when the local
+    /// player performs an aim-scare, so AI on the host reacts as if
+    /// the remote player made the noise.
+    /// </summary>
     [HarmonyPatch(typeof(Player), "aimScare")]
     public static class ClientAimScarePatch
     {
