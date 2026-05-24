@@ -18,6 +18,7 @@ namespace DarkwoodMultiplayer.Players
         private tk2dSpriteAnimator _legsAnimator;
         private tk2dBaseSprite _torsoSprite;
 
+        private tk2dSpriteAnimation _noneAnimsLib;
         private string _currentTorsoClip;
         private LocomotionState _state = LocomotionState.Idle;
         private bool _flipX;
@@ -32,6 +33,7 @@ namespace DarkwoodMultiplayer.Players
         {
             _torsoAnimator = GetComponent<tk2dSpriteAnimator>();
             _torsoSprite = GetComponent<tk2dBaseSprite>();
+            _noneAnimsLib = Resources.Load("PlayerNoneAnims", typeof(tk2dSpriteAnimation)) as tk2dSpriteAnimation;
 
             Transform legsTransform = transform.Find("PlayerLegs");
             if (legsTransform != null)
@@ -196,7 +198,16 @@ namespace DarkwoodMultiplayer.Players
                 return;
 
             if (_torsoAnimator.GetClipByName(clipName) == null)
-                return;
+            {
+                if (_noneAnimsLib != null && _noneAnimsLib.GetClipByName(clipName) != null)
+                {
+                    _torsoAnimator.Library = _noneAnimsLib;
+                }
+                else
+                {
+                    return;
+                }
+            }
 
             if (clipName == _currentTorsoClip)
                 return;

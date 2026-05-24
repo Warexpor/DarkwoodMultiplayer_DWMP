@@ -18,6 +18,8 @@ namespace DarkwoodMultiplayer.Networking
             public bool hasTarget;
             public bool alive;
             public bool isFirst;
+            public bool spawnedLocally;
+            public float staleSince;
         }
 
         private static readonly Dictionary<short, EntityInterpState> _states = new Dictionary<short, EntityInterpState>(64);
@@ -59,6 +61,7 @@ namespace DarkwoodMultiplayer.Networking
                 sb.Append($"{e.Index} ");
 
                 Character c = CharacterTracker.FindByStableId(e.Index);
+                bool justSpawned = false;
                 if (c == null)
                 {
                     // Try to spawn the entity on the client so future snapshots find it
@@ -73,6 +76,7 @@ namespace DarkwoodMultiplayer.Networking
                     }
                     // Assign the host's stable ID so we match future snapshots
                     CharacterTracker.AssignId(c, e.Index);
+                    justSpawned = true;
                 }
 
                 // Ensure entity is fully active for rendering
@@ -83,6 +87,10 @@ namespace DarkwoodMultiplayer.Networking
                     state = new EntityInterpState { isFirst = true };
                     _states[e.Index] = state;
                 }
+
+                if (justSpawned)
+                    state.spawnedLocally = true;
+                state.staleSince = 0f;
 
                 if (state.isFirst)
                 {
@@ -165,6 +173,8 @@ namespace DarkwoodMultiplayer.Networking
             }
         }
 
+        private const float PhantomCleanupDelay = 5f;
+
         public static void TickLateUpdate()
         {
             float now = Time.time;
@@ -176,12 +186,30 @@ namespace DarkwoodMultiplayer.Networking
                 EntityInterpState state = kvp.Value;
 
                 if (!state.hasTarget)
+                {
+                    // No target means no snapshots arriving — track stale time
+                    // and destroy locally-spawned phantoms after PhantomCleanupDelay
+                    if (state.spawnedLocally && state.staleSince > 0f && now - state.staleSince > PhantomCleanupDelay)
+                    {
+                        Character c = CharacterTracker.FindByStableId(id);
+                        if (c != null)
+                        {
+                            ModRuntime.Log?.LogInfo($"[ClientEntitySync] destroying phantom: id={id}");
+                            Object.Destroy(c.gameObject);
+                        }
+                        _staleKeys.Add(id);
+                        _displayPositions.Remove(id);
+                        _displayRotations.Remove(id);
+                    }
                     continue;
+                }
 
-                Character c = CharacterTracker.FindByStableId(id);
-                if (c == null)
+                Character tracked = CharacterTracker.FindByStableId(id);
+                if (tracked == null)
                 {
                     _staleKeys.Add(id);
+                    _displayPositions.Remove(id);
+                    _displayRotations.Remove(id);
                     continue;
                 }
 
@@ -193,6 +221,7 @@ namespace DarkwoodMultiplayer.Networking
                     _displayPositions[id] = state.targetPosition;
                     _displayRotations[id] = state.targetRotY;
                     state.hasTarget = false;
+                    state.staleSince = now;
                 }
                 else if (elapsed > SnapshotInterval)
                 {
@@ -213,17 +242,15 @@ namespace DarkwoodMultiplayer.Networking
                     _displayRotations[id] = Mathf.LerpAngle(state.previousRotY, state.targetRotY, smoothT);
                 }
 
-                c.transform.position = _displayPositions[id];
-                Vector3 rot = c.transform.eulerAngles;
+                tracked.transform.position = _displayPositions[id];
+                Vector3 rot = tracked.transform.eulerAngles;
                 rot.y = _displayRotations[id];
-                c.transform.eulerAngles = rot;
+                tracked.transform.eulerAngles = rot;
             }
 
             for (int i = 0; i < _staleKeys.Count; i++)
             {
                 _states.Remove(_staleKeys[i]);
-                _displayPositions.Remove(_staleKeys[i]);
-                _displayRotations.Remove(_staleKeys[i]);
             }
         }
 

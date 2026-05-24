@@ -12,6 +12,8 @@ namespace DarkwoodMultiplayer.Players
         private Vector3 _pushOffset;
         private bool _hasState;
         private Rigidbody _rb;
+        private bool _isVaulting;
+        private Collider[] _cachedColliders;
 
         public static RemotePlayerProxy Instance { get; private set; }
 
@@ -122,11 +124,31 @@ namespace DarkwoodMultiplayer.Players
             _anim?.ApplyNetworkSnapshot(
                 state.Locomotion, state.FlipX, state.LegFacingY,
                 state.ReverseLegs, state.TorsoFacingY, state.TorsoClip, state.LegsClip);
+
+            bool nowVaulting = state.TorsoClip == "JumpWindow";
+            if (nowVaulting != _isVaulting)
+            {
+                _isVaulting = nowVaulting;
+
+                // Disable colliders during vault so proxy can pass through window;
+                // re-enable when vault ends.
+                foreach (var col in _cachedColliders)
+                    col.enabled = !nowVaulting;
+
+                if (!nowVaulting)
+                {
+                    // Vault just ended — teleport to exact final position so we don't
+                    // accumulate lag from the lerp.
+                    _rb.position = _targetPosition;
+                    _pushOffset = Vector3.zero;
+                }
+            }
         }
 
         private void Awake()
         {
             _rb = GetComponent<Rigidbody>();
+            _cachedColliders = GetComponentsInChildren<Collider>(true);
         }
 
         private void Start()
@@ -187,6 +209,16 @@ namespace DarkwoodMultiplayer.Players
         {
             if (!_hasState || _rb == null)
                 return;
+
+            if (_isVaulting)
+            {
+                // During vault: teleport directly to target position.
+                // Colliders are disabled so we pass through the window.
+                _rb.position = _targetPosition;
+                _rb.velocity = Vector3.zero;
+                _pushOffset = Vector3.zero;
+                return;
+            }
 
             Vector3 target = _targetPosition + _pushOffset;
             target.y = _rb.position.y;
