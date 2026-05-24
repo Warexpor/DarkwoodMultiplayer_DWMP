@@ -32,9 +32,14 @@ namespace DarkwoodMultiplayer.Patches
             if (charComponent == null)
                 return false;
 
-            // Entity is busy — skip all sniff logic
-            if (charComponent.enemyInSight ||
-                charComponent.behaviour == Character.Behaviour.chasingTarget ||
+            // Let the original Sniffer.Update run when the proxy is outside
+            // the entity's effective detection range (visual + smell).
+            if (ProxyDistanceHelper.ProxyIsFar(charComponent))
+                return true;
+
+            // Entity is busy — skip sniff logic (but NOT enemyInSight, which
+            // could be the host while the proxy is also within range)
+            if (charComponent.behaviour == Character.Behaviour.chasingTarget ||
                 charComponent.behaviour == Character.Behaviour.defensive ||
                 charComponent.behaviour == Character.Behaviour.escaping)
                 return false;
@@ -236,14 +241,16 @@ namespace DarkwoodMultiplayer.Patches
             if (!PlayerPositionManager.HasRemotePlayer)
                 return true;
 
+            if (ProxyDistanceHelper.ProxyIsFar(__instance))
+                return true;
+
             if (__instance.charactersInSight.Count == 0)
                 return false;
 
             Transform currentTarget = __instance.target;
-            if (currentTarget == null)
-                return false;
-
-            float currentDist = Core.trueDistance(__instance.transform.position, currentTarget.position);
+            float currentDist = currentTarget != null
+                ? Core.trueDistance(__instance.transform.position, currentTarget.position)
+                : float.MaxValue;
             float closestDist = currentDist;
             Transform closestTransform = null;
 

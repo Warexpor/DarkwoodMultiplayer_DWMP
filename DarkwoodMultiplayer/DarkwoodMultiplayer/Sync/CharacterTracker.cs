@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using DarkwoodMultiplayer.Networking;
 using HarmonyLib;
@@ -36,6 +37,62 @@ namespace DarkwoodMultiplayer.Sync
                 _stableIdCache[c] = id;
             }
             return id;
+        }
+
+        /// <summary>Returns the stable ID for a character without assigning one (unlike GetStableId).</summary>
+        public static bool TryGetStableId(Character c, out short id)
+        {
+            if (c == null) { id = 0; return false; }
+            lock (_lock)
+            {
+                return _stableIdCache.TryGetValue(c, out id);
+            }
+        }
+
+        /// <summary>
+        /// Finds the closest character whose name matches <paramref name="name"/>
+        /// and whose position is within <paramref name="radius"/> of <paramref name="pos"/>.
+        /// Excludes characters already in the <paramref name="excludeIds"/> set.
+        /// Returns null if no match is found.
+        /// </summary>
+        public static Character FindByPositionAndName(Vector3 pos, string name, float radius, HashSet<short> excludeIds = null)
+        {
+            float radiusSq = radius * radius;
+            Character best = null;
+            float bestDistSq = float.MaxValue;
+
+            // Normalise the search name: strip "(Clone)" suffix
+            string searchName = name;
+            if (searchName.EndsWith("(Clone)"))
+                searchName = searchName.Substring(0, searchName.Length - 7);
+
+            lock (_lock)
+            {
+                for (int i = 0; i < _characters.Count; i++)
+                {
+                    Character c = _characters[i];
+                    if (c == null) continue;
+
+                    // Skip if excluded
+                    if (excludeIds != null && _stableIdCache.TryGetValue(c, out short sid) && excludeIds.Contains(sid))
+                        continue;
+
+                    // Name must match (allow both with and without "(Clone)")
+                    string cName = c.name;
+                    if (!string.Equals(cName, searchName, StringComparison.OrdinalIgnoreCase)
+                        && !string.Equals(cName, searchName + "(Clone)", StringComparison.OrdinalIgnoreCase)
+                        && !string.Equals(cName + "(Clone)", searchName, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    float dSq = (c.transform.position - pos).sqrMagnitude;
+                    if (dSq < radiusSq && dSq < bestDistSq)
+                    {
+                        bestDistSq = dSq;
+                        best = c;
+                    }
+                }
+            }
+            return best;
         }
 
         /// <summary>Assigns a specific stable ID (from the host) to the given character on a client.</summary>
@@ -117,30 +174,13 @@ namespace DarkwoodMultiplayer.Sync
         }
     }
 
-    /// <summary>Harmony patch: registers characters with the tracker on Start and forces idle animation on clients.</summary>
+    /// <summary>Harmony patch: registers characters with the tracker on Start.</summary>
     [HarmonyPatch(typeof(Character), "Start")]
     public static class CharacterStartPatch
     {
         private static void Postfix(Character __instance)
         {
             CharacterTracker.Add(__instance);
-
-            // On clients, force non-remote characters into their idle clip
-            // so they don't play the default T-pose animation before a sync arrives.
-            if (ModRuntime.Network != null && ModRuntime.Network.Role == NetworkRole.Client
-                && __instance.name != null && !__instance.name.Contains("RemotePlayer"))
-            {
-                tk2dSpriteAnimator anim = __instance.GetComponent<tk2dSpriteAnimator>();
-                if (anim != null)
-                {
-                    string idleClip = HarmonyLib.Traverse.Create(__instance).Field("idleAni").GetValue<string>();
-                    if (!string.IsNullOrEmpty(idleClip) && anim.GetClipByName(idleClip) != null)
-                    {
-                        if (anim.CurrentClip == null || anim.CurrentClip.name != idleClip)
-                            anim.Play(idleClip);
-                    }
-                }
-            }
         }
     }
 

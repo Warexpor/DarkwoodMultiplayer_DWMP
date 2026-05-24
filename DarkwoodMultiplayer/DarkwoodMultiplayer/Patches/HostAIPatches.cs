@@ -6,6 +6,24 @@ using UnityEngine;
 
 namespace DarkwoodMultiplayer.Patches
 {
+    internal static class ProxyDistanceHelper
+    {
+        internal static bool ProxyIsFar(Character c)
+        {
+            if (!PlayerPositionManager.HasRemotePlayer)
+                return true;
+            Transform proxyT = LanNetworkManager.Instance?.RemoteProxy?.transform;
+            if (proxyT == null)
+                return true;
+            float dist = (c.transform.position - proxyT.position).magnitude;
+            float range = (float)c.farViewDistance * c.aniSightRangeModifier;
+            Sniffer sniffer = c.GetComponent<Sniffer>();
+            if (sniffer != null && sniffer.radius > range)
+                range = sniffer.radius;
+            return dist > range + 50f;
+        }
+    }
+
     /// <summary>
     /// Augments Character.canSeeEnemy on the host so NPCs react to both
     /// the host player and the remote proxy for detection, targeting,
@@ -23,6 +41,30 @@ namespace DarkwoodMultiplayer.Patches
 
             Transform proxyT = RemoteProxyTransform();
             if (proxyT == null) return;
+
+            // --- CASE 3: Entity has no target but host is visible ---
+            // Must run BEFORE the ProxyDistanceHelper guard so host-target
+            // acquisition happens even when the proxy has fled. Handles the
+            // onlyAttackPlayer=true case where canSeeEnemy can't set target.
+            if (__instance.aggressiveness != Aggressiveness.neutral &&
+                __instance.aggressiveness != Aggressiveness.follower)
+            {
+                CharBase hostCB = Player.Instance?.GetComponent<CharBase>();
+                if (hostCB != null && __instance.charactersInSight.Contains(hostCB) && !hostCB.invisible && !hostCB.ignoreMe)
+                {
+                    bool acquiringHost = __instance.target == null ||
+                        (__instance.target != hostCB.transform && __instance.behaviour != Character.Behaviour.chasingTarget);
+                    if (acquiringHost)
+                    {
+                        __instance.attackCharacter(hostCB.transform);
+                    }
+                }
+            }
+
+            // Don't modify entity behavior for proxy-specific cases when the
+            // proxy is outside detection range (CASE 1 and CASE 2).
+            if (ProxyDistanceHelper.ProxyIsFar(__instance))
+                return;
 
             // --- CASE 1: Entity is already chasing the proxy ---
             // Check if the host is detectable and add to charactersInSight
@@ -69,21 +111,6 @@ namespace DarkwoodMultiplayer.Patches
                     }
                 }
                 return;
-            }
-
-            // --- CASE 3: Entity has no target but host is visible ---
-            // Runs regardless of proxy position. Handles the case where the proxy
-            // ran away and the entity is idle — acquire the host as target.
-            // Also handles onlyAttackPlayer which blocks canSeeEnemy from setting target.
-            if ((__instance.target == null || __instance.behaviour != Character.Behaviour.chasingTarget) &&
-                __instance.aggressiveness != Aggressiveness.neutral &&
-                __instance.aggressiveness != Aggressiveness.follower)
-            {
-                CharBase hostCB = Player.Instance?.GetComponent<CharBase>();
-                if (hostCB != null && __instance.charactersInSight.Contains(hostCB) && !hostCB.invisible && !hostCB.ignoreMe)
-                {
-                    __instance.attackCharacter(hostCB.transform);
-                }
             }
 
             // --- CASE 2: Entity is NOT yet chasing the proxy ---
@@ -328,6 +355,9 @@ namespace DarkwoodMultiplayer.Patches
             if (ModRuntime.Network == null || ModRuntime.Network.Role != NetworkRole.Host)
                 return true;
             if (!PlayerPositionManager.HasRemotePlayer)
+                return true;
+
+            if (ProxyDistanceHelper.ProxyIsFar(__instance))
                 return true;
 
             if (__instance.wantToDespawn)
