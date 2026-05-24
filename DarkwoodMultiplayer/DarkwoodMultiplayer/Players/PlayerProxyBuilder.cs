@@ -145,17 +145,21 @@ namespace DarkwoodMultiplayer.Players
         {
             if (kind == PlayerCloneKind.Remote)
             {
+                // Must use DestroyImmediate so CharBase from Player is gone
+                // before a standalone CharBase is added in AddCharBase().
+                // Object.Destroy (non-immediate) queues destruction to end of
+                // frame, leaving the proxy without CharBase after frame 1.
                 Player player = clone.GetComponent<Player>();
                 if (player != null)
-                    UnityEngine.Object.Destroy(player);
+                    UnityEngine.Object.DestroyImmediate(player);
 
                 PlayerSkills skills = clone.GetComponent<PlayerSkills>();
                 if (skills != null)
-                    UnityEngine.Object.Destroy(skills);
+                    UnityEngine.Object.DestroyImmediate(skills);
 
                 SkillsMenu menu = clone.GetComponent<SkillsMenu>();
                 if (menu != null)
-                    UnityEngine.Object.Destroy(menu);
+                    UnityEngine.Object.DestroyImmediate(menu);
             }
 
             if (kind == PlayerCloneKind.Remote)
@@ -165,11 +169,11 @@ namespace DarkwoodMultiplayer.Players
 
                 Rigidbody rb = clone.GetComponent<Rigidbody>();
                 if (rb != null)
-                    UnityEngine.Object.Destroy(rb);
+                    UnityEngine.Object.DestroyImmediate(rb);
 
                 Rigidbody2D rb2d = clone.GetComponent<Rigidbody2D>();
                 if (rb2d != null)
-                    UnityEngine.Object.Destroy(rb2d);
+                    UnityEngine.Object.DestroyImmediate(rb2d);
             }
         }
 

@@ -13,6 +13,12 @@ namespace DarkwoodMultiplayer.Players
 
         public static RemotePlayerProxy Instance { get; private set; }
 
+        // Remote player's skill/effect state, synced from client via PlayerEffectSyncMessage
+        public bool RemoteHasShadowWard { get; set; }
+        public bool RemoteHasForestSpiritWard { get; set; }
+        public bool RemoteHasFriendOfTheForest { get; set; }
+        public bool RemoteHasEnemyOfTheForest { get; set; }
+
         public static RemotePlayerProxy Spawn(ManualLogSource log)
         {
             Player source = PlayerControlRouter.MainPlayer ?? Player.Instance;
@@ -45,15 +51,13 @@ namespace DarkwoodMultiplayer.Players
 
         private static void AddCharBase(GameObject go, ManualLogSource log)
         {
-            CharBase cb = go.GetComponent<CharBase>();
-            if (cb == null)
-                cb = go.AddComponent<CharBase>();
+            CharBase cb = go.AddComponent<CharBase>();
             cb.alive = true;
             cb.isActive = true;
             cb.Health = 1f;
             cb.maxHealth = 1f;
             cb.faction = Faction.player;
-            log?.LogInfo("RemoteProxy: added CharBase with Faction.player.");
+            log?.LogInfo("RemoteProxy: added standalone CharBase with Faction.player.");
         }
 
         private static void EnableGroundLight(Transform root, ManualLogSource log)

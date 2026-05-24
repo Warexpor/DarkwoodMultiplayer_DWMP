@@ -16,7 +16,8 @@ namespace DarkwoodMultiplayer.Networking
         BarricadeEvent = 12,
         WorkbenchLevel = 13,
         JournalItem = 14,
-        FriendlyFire = 15
+        FriendlyFire = 15,
+        PlayerEffectSync = 16
     }
 
     /// <summary>
@@ -457,5 +458,55 @@ namespace DarkwoodMultiplayer.Networking
             AttackerPosX = r.GetFloat(), AttackerPosY = r.GetFloat(), AttackerPosZ = r.GetFloat(),
             CanCutInHalf = r.GetBool()
         };
+    }
+
+    /// <summary>
+    /// Client → Host: periodic sync of remote player's skill/effect state
+    /// so the host's AI responds appropriately (shadowWard, FriendOfTheForest, etc.)
+    /// </summary>
+    public struct PlayerEffectSyncMessage
+    {
+        public byte Flags; // bitmask: 1=shadowWard, 2=forestSpiritWard, 4=FriendOfTheForest, 8=EnemyOfTheForest, 16=invisible, 32=ignoreMe
+
+        public bool HasShadowWard
+        {
+            get => (Flags & 1) != 0;
+            set => Flags = (byte)((Flags & ~1) | (value ? 1 : 0));
+        }
+
+        public bool HasForestSpiritWard
+        {
+            get => (Flags & 2) != 0;
+            set => Flags = (byte)((Flags & ~2) | (value ? 2 : 0));
+        }
+
+        public bool FriendOfTheForest
+        {
+            get => (Flags & 4) != 0;
+            set => Flags = (byte)((Flags & ~4) | (value ? 4 : 0));
+        }
+
+        public bool EnemyOfTheForest
+        {
+            get => (Flags & 8) != 0;
+            set => Flags = (byte)((Flags & ~8) | (value ? 8 : 0));
+        }
+
+        public bool Invisible
+        {
+            get => (Flags & 16) != 0;
+            set => Flags = (byte)((Flags & ~16) | (value ? 16 : 0));
+        }
+
+        public bool IgnoreMe
+        {
+            get => (Flags & 32) != 0;
+            set => Flags = (byte)((Flags & ~32) | (value ? 32 : 0));
+        }
+
+        public void Serialize(NetWriter w) => w.Put(Flags);
+
+        public static PlayerEffectSyncMessage Deserialize(NetReader r)
+            => new PlayerEffectSyncMessage { Flags = r.GetByte() };
     }
 }

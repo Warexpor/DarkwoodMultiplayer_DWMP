@@ -13,20 +13,24 @@ namespace DarkwoodMultiplayer.Patches
         {
             if (ModRuntime.Network == null || ModRuntime.Network.Role != NetworkRole.Host)
                 return;
-            if (!PlayerPositionManager.HasRemotePlayer)
-                return;
             if (__instance.dummy || __instance.blind || !__instance.alive)
                 return;
 
             Transform proxyT = RemoteProxyTransform();
             if (proxyT == null) return;
 
+            // Always force-set target when proxy is within range and line-of-sight,
+            // even if canSeeEnemy was not called or onlyAttackPlayer blocked it
             Vector3 toRemote = proxyT.position - __instance.transform.position;
             float dist = toRemote.magnitude;
             float maxDist = (float)__instance.farViewDistance * __instance.aniSightRangeModifier;
 
             if (dist > maxDist) return;
             if (Vector3.Angle(toRemote, __instance.transform.up) > (float)__instance.fieldOfViewRange) return;
+
+            // Don't redirect neutral entities (rabbits, pigs, etc.)
+            if (__instance.aggressiveness == Aggressiveness.neutral)
+                return;
 
             Collider myCollider = __instance.GetComponent<Collider>();
             if (Physics.Raycast(__instance.transform.position, toRemote, out var hit, dist, 18909185))
@@ -41,6 +45,7 @@ namespace DarkwoodMultiplayer.Patches
                 __instance.canSeeEnemyFar = true;
                 __instance.stopRoutine("lostEnemy", true);
 
+                // Force target to proxy even if vanilla canSeeEnemy blocked it (onlyAttackPlayer etc.)
                 if (__instance.target == null || __instance.target != proxyT)
                 {
                     if (__instance.aggressiveness != Aggressiveness.neutral &&
@@ -59,6 +64,22 @@ namespace DarkwoodMultiplayer.Patches
                 if (dist < (float)__instance.nearViewDistance * __instance.aniSightRangeModifier)
                 {
                     __instance.canSeeEnemyNear = true;
+                }
+
+                // Remote player effect checks (shadowWard, forestSpiritWard)
+                RemotePlayerProxy proxy = hit.collider.GetComponentInParent<RemotePlayerProxy>();
+                if (proxy != null)
+                {
+                    if (__instance.afraidOfHideout && proxy.RemoteHasShadowWard)
+                    {
+                        __instance.runAway(proxyT.position);
+                        __instance.wantToDespawn = true;
+                    }
+                    if (__instance.afraidOfForestSpiritWard && proxy.RemoteHasForestSpiritWard)
+                    {
+                        __instance.runAway(proxyT.position);
+                        __instance.blind = true;
+                    }
                 }
             }
         }
@@ -129,9 +150,7 @@ namespace DarkwoodMultiplayer.Patches
     [HarmonyPatch(typeof(Character), "checkStuff")]
     public static class HostCheckStuffPatch
     {
-        private static readonly System.Collections.Generic.HashSet<Character> _suppressed = new System.Collections.Generic.HashSet<Character>();
-        private static readonly System.Collections.Generic.Dictionary<Character, (bool temporary, bool wantDespawn)> _saved =
-            new System.Collections.Generic.Dictionary<Character, (bool, bool)>();
+        private static readonly HashSet<Character> _suppressed = new HashSet<Character>();
 
         private static bool Prefix(Character __instance)
         {
@@ -139,8 +158,6 @@ namespace DarkwoodMultiplayer.Patches
                 return true;
             if (!PlayerPositionManager.HasRemotePlayer)
                 return true;
-
-            _suppressed.Remove(__instance);
 
             float distSq = PlayerPositionManager.SqrDistanceToNearestPlayer(__instance.transform.position);
             float distToHost = Core.trueDistance(Player.Instance._transform.position, __instance.transform.position);
@@ -154,8 +171,15 @@ namespace DarkwoodMultiplayer.Patches
             if (!vanillaWouldRemove)
                 return true;
 
-            // Vanilla would remove because host is far; keep alive if nearest player is close
-            if (distSq <= 3500f * 3500f && distSq <= 1500f * 1500f)
+            // Vanilla would remove because host is far;
+            // keep alive if nearest player (host or remote) is close enough
+            bool keepAlive = false;
+            if (__instance.temporarySpawned && distSq <= 3500f * 3500f)
+                keepAlive = true;
+            if (__instance.wantToDespawn && distSq <= 1500f * 1500f)
+                keepAlive = true;
+
+            if (keepAlive)
             {
                 _suppressed.Add(__instance);
                 return false;
@@ -176,15 +200,15 @@ namespace DarkwoodMultiplayer.Patches
 
             float distSq = PlayerPositionManager.SqrDistanceToNearestPlayer(__instance.transform.position);
 
-            if (distSq > 3500f * 3500f)
+            bool removed = false;
+            if (__instance.temporarySpawned && distSq > 3500f * 3500f)
             {
-                if (__instance.temporarySpawned)
-                    __instance.removeMe();
+                __instance.removeMe();
+                removed = true;
             }
-            else if (distSq > 1500f * 1500f)
+            if (!removed && __instance.wantToDespawn && distSq > 1500f * 1500f)
             {
-                if (__instance.wantToDespawn)
-                    __instance.removeMe();
+                __instance.removeMe();
             }
         }
     }

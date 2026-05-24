@@ -23,6 +23,7 @@ namespace DarkwoodMultiplayer.Networking
         private WorldSyncService _worldSync;
         private float _sendTimer;
         private float _proxyAggroTimer;
+        private float _effectSyncTimer;
         private Vector3 _lastSentPosition;
         private bool _handshakeComplete;
 
@@ -150,6 +151,17 @@ namespace DarkwoodMultiplayer.Networking
             Vector3 vel = (pos - _lastSentPosition) / SendInterval;
             _lastSentPosition = pos;
 
+            // Client: periodically sync skill/effect state to host
+            if (_role == NetworkRole.Client)
+            {
+                _effectSyncTimer += Time.deltaTime;
+                if (_effectSyncTimer >= 2f)
+                {
+                    _effectSyncTimer = 0f;
+                    SendPlayerEffects();
+                }
+            }
+
             // Both sides: send own position to the other side at 20 Hz
             var msg = new PlayerStateMessage
             {
@@ -176,31 +188,43 @@ namespace DarkwoodMultiplayer.Networking
 
         private void ProxyAggroCheck()
         {
-            if (!PlayerPositionManager.HasRemotePlayer || _remoteProxy == null)
+            if (_remoteProxy == null)
                 return;
 
             Transform proxyT = _remoteProxy.transform;
             Character[] all = CharacterTracker.GetAll();
 
+            if (all.Length == 0)
+                return;
+
+            int aggroed = 0;
+            int skippedNoLOS = 0;
+            int skippedFar = 0;
+            int skippedAlreadyTargeting = 0;
+
             foreach (Character c in all)
             {
                 if (c == null || !c.alive || c.dummy)
                     continue;
+
                 if (c.target == proxyT)
                     continue;
 
                 float distToProxy = Vector3.Distance(c.transform.position, proxyT.position);
                 float farRange = (float)c.farViewDistance * c.aniSightRangeModifier;
 
-                if (distToProxy > farRange)
+                if (farRange <= 0f || distToProxy > farRange)
+                {
+                    skippedFar++;
                     continue;
+                }
 
                 // Wake up and redirect sleeping enemies near the proxy
                 if (c.sleeping)
                 {
                     c.wakeup();
-                    if (distToProxy <= farRange)
-                        c.attackCharacter(proxyT);
+                    c.attackCharacter(proxyT);
+                    aggroed++;
                     continue;
                 }
 
@@ -210,21 +234,41 @@ namespace DarkwoodMultiplayer.Networking
                 if (distToProxy <= nearRange)
                 {
                     c.attackCharacter(proxyT);
+                    aggroed++;
                     continue;
                 }
 
                 // Far range: only redirect idle enemies
-                if (c.target != null)
+                if (c.target != null && c.target != proxyT)
+                {
+                    skippedAlreadyTargeting++;
                     continue;
+                }
 
                 Vector3 toProxy = proxyT.position - c.transform.position;
                 if (Physics.Raycast(c.transform.position, toProxy.normalized, out var hit, distToProxy, 18909185))
                 {
                     if (hit.collider != null && hit.collider.GetComponentInParent<RemotePlayerProxy>() != null)
+                    {
                         c.attackCharacter(proxyT);
+                        aggroed++;
+                    }
+                    else
+                    {
+                        skippedNoLOS++;
+                    }
+                }
+                else
+                {
+                    skippedNoLOS++;
                 }
             }
+
+            if (aggroed > 0 || (_aggroLogCounter++ % 10 == 0))
+                ModRuntime.Log?.LogInfo($"[ProxyAggro] checked {all.Length} chars, aggroed={aggroed}, noLOS={skippedNoLOS}, far={skippedFar}, alreadyTargetingOthers={skippedAlreadyTargeting}");
         }
+
+        private static int _aggroLogCounter;
 
         private void LateUpdate()
         {
@@ -346,6 +390,9 @@ namespace DarkwoodMultiplayer.Networking
                     break;
                 case NetMessageType.FriendlyFire:
                     HandleFriendlyFire(FriendlyFireMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.PlayerEffectSync:
+                    HandlePlayerEffectSync(PlayerEffectSyncMessage.Deserialize(new NetReader(payload)));
                     break;
                 }
             }
@@ -784,6 +831,41 @@ namespace DarkwoodMultiplayer.Networking
 
             Destroy(_remoteProxy.gameObject);
             _remoteProxy = null;
+        }
+
+        private void SendPlayerEffects()
+        {
+            Player local = Player.Instance;
+            if (local == null) return;
+
+            var msg = new PlayerEffectSyncMessage
+            {
+                HasShadowWard = local.effects.hasEffectType(CharacterEffectType.shadowWard),
+                HasForestSpiritWard = local.effects.hasEffectType(CharacterEffectType.forestSpiritWard),
+                FriendOfTheForest = local.skills.FriendOfTheForest,
+                EnemyOfTheForest = local.skills.EnemyOfTheForest,
+                Invisible = local.invisible,
+                IgnoreMe = local.ignoreMe
+            };
+            Send(NetMessageType.PlayerEffectSync, w => msg.Serialize(w), DeliveryMethod.ReliableOrdered);
+        }
+
+        private void HandlePlayerEffectSync(PlayerEffectSyncMessage msg)
+        {
+            EnsureRemoteProxy();
+            if (_remoteProxy == null) return;
+
+            _remoteProxy.RemoteHasShadowWard = msg.HasShadowWard;
+            _remoteProxy.RemoteHasForestSpiritWard = msg.HasForestSpiritWard;
+            _remoteProxy.RemoteHasFriendOfTheForest = msg.FriendOfTheForest;
+            _remoteProxy.RemoteHasEnemyOfTheForest = msg.EnemyOfTheForest;
+
+            CharBase cb = _remoteProxy.GetComponent<CharBase>();
+            if (cb != null)
+            {
+                cb.invisible = msg.Invisible;
+                cb.ignoreMe = msg.IgnoreMe;
+            }
         }
 
         public void OnNetworkReceiveUnconnected(IPEndPoint remoteEndPoint, NetPacketReader reader, UnconnectedMessageType messageType)

@@ -121,6 +121,7 @@
         <Compile Include="Patches\PlayerUpdatePatch.cs"/>
         <Compile Include="Patches\PlayerInventoryPatches.cs"/>
         <Compile Include="Patches\HostAIPatches.cs"/>
+        <Compile Include="Patches\HostDetectionGapPatches.cs"/>
         <Compile Include="Patches\ClientAIDisablePatches.cs"/>
         <Compile Include="Patches\HostCombatPatches.cs"/>
         <Compile Include="Patches\ClientCombatPatches.cs"/>
