@@ -35,6 +35,17 @@ namespace DarkwoodMultiplayer.Sync
             return id;
         }
 
+        public static void AssignId(Character c, short id)
+        {
+            if (c == null) return;
+            lock (_lock)
+            {
+                _stableIdCache[c] = id;
+                if (!_characters.Contains(c))
+                    _characters.Add(c);
+            }
+        }
+
         public static Character FindByStableId(short id)
         {
             lock (_lock)
@@ -69,7 +80,8 @@ namespace DarkwoodMultiplayer.Sync
                 if (!_characters.Contains(c))
                 {
                     _characters.Add(c);
-                    _stableIdCache[c] = _nextId++;
+                    if (!_stableIdCache.ContainsKey(c))
+                        _stableIdCache[c] = _nextId++;
                 }
             }
         }
@@ -106,11 +118,14 @@ namespace DarkwoodMultiplayer.Sync
                 && __instance.name != null && !__instance.name.Contains("RemotePlayer"))
             {
                 tk2dSpriteAnimator anim = __instance.GetComponent<tk2dSpriteAnimator>();
-                if (anim != null && anim.CurrentClip == null)
+                if (anim != null)
                 {
                     string idleClip = HarmonyLib.Traverse.Create(__instance).Field("idleAni").GetValue<string>();
                     if (!string.IsNullOrEmpty(idleClip) && anim.GetClipByName(idleClip) != null)
-                        anim.Play(idleClip);
+                    {
+                        if (anim.CurrentClip == null || anim.CurrentClip.name != idleClip)
+                            anim.Play(idleClip);
+                    }
                 }
             }
         }

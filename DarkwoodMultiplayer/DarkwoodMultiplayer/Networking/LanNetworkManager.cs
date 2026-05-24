@@ -198,9 +198,10 @@ namespace DarkwoodMultiplayer.Networking
                 return;
 
             int aggroed = 0;
-            int skippedNoLOS = 0;
             int skippedFar = 0;
             int skippedAlreadyTargeting = 0;
+
+            bool proxyHasEotF = _remoteProxy.RemoteHasEnemyOfTheForest;
 
             foreach (Character c in all)
             {
@@ -210,10 +211,61 @@ namespace DarkwoodMultiplayer.Networking
                 if (c.target == proxyT)
                     continue;
 
-                float distToProxy = Vector3.Distance(c.transform.position, proxyT.position);
-                float farRange = (float)c.farViewDistance * c.aniSightRangeModifier;
+                // Skip neutral entities (rabbits, pigs, chickens) — they flee, never chase
+                // However, EnemyOfTheForest makes all animalAggressive entities attack
+                if (c.aggressiveness == Aggressiveness.neutral)
+                {
+                    if (!proxyHasEotF || c.faction != Faction.animalAggressive)
+                    {
+                        skippedFar++;
+                        continue;
+                    }
+                }
 
-                if (farRange <= 0f || distToProxy > farRange)
+                // Skip entities that don't interact with the player faction at all
+                if (!c.attacksFaction(Faction.player))
+                {
+                    bool runsFromPlayer = HarmonyLib.Traverse.Create(c)
+                        .Method("runsAwayFromFaction", Faction.player)
+                        .GetValue<bool>();
+                    if (!runsFromPlayer)
+                    {
+                        if (!proxyHasEotF || c.faction != Faction.animalAggressive)
+                        {
+                            skippedFar++;
+                            continue;
+                        }
+                    }
+                }
+
+                // Determine if this entity should flee from the proxy (rather than attack)
+                bool runsFromProxy = c.aggressiveness == Aggressiveness.flee ||
+                    c.aggressiveness == Aggressiveness.fleeAndDespawn ||
+                    (c.attacksFaction(Faction.player) == false &&
+                     HarmonyLib.Traverse.Create(c)
+                         .Method("runsAwayFromFaction", Faction.player)
+                         .GetValue<bool>());
+
+                float distToProxy = Vector3.Distance(c.transform.position, proxyT.position);
+
+                // Skip entities that have a Sniffer component — those are handled by
+                // HostSnifferUpdatePatch which respects the full sniffTime + cooldownTime
+                // timing (animation, sound, delayed attack). Without this, ProxyAggroCheck
+                // would bypass the Sniffer entirely and cause instant attacks instead
+                // of the sniff-then-attack sequence.
+                if (c.GetComponent<Sniffer>() != null)
+                {
+                    skippedFar++;
+                    continue;
+                }
+
+                // --- Use short proximity range, NOT visual range ---
+                // HostCanSeeEnemyPatch already handles visual detection at the full farViewDistance.
+                // This check is only for short-range detection that the periodic canSeeEnemy
+                // coroutine might miss between cycles.
+                float proxRange = Mathf.Min((float)c.nearViewDistance * c.aniSightRangeModifier, 300f);
+
+                if (proxRange <= 0f || distToProxy > proxRange)
                 {
                     skippedFar++;
                     continue;
@@ -223,50 +275,27 @@ namespace DarkwoodMultiplayer.Networking
                 if (c.sleeping)
                 {
                     c.wakeup();
-                    c.attackCharacter(proxyT);
-                    aggroed++;
-                    continue;
-                }
-
-                float nearRange = (float)c.nearViewDistance * c.aniSightRangeModifier;
-
-                // Close proximity: always redirect to proxy (overrides host aggro)
-                if (distToProxy <= nearRange)
-                {
-                    c.attackCharacter(proxyT);
-                    aggroed++;
-                    continue;
-                }
-
-                // Far range: only redirect idle enemies
-                if (c.target != null && c.target != proxyT)
-                {
-                    skippedAlreadyTargeting++;
-                    continue;
-                }
-
-                Vector3 toProxy = proxyT.position - c.transform.position;
-                if (Physics.Raycast(c.transform.position, toProxy.normalized, out var hit, distToProxy, 18909185))
-                {
-                    if (hit.collider != null && hit.collider.GetComponentInParent<RemotePlayerProxy>() != null)
-                    {
-                        c.attackCharacter(proxyT);
-                        aggroed++;
-                    }
+                    if (runsFromProxy)
+                        c.runAway(proxyT.position);
                     else
-                    {
-                        skippedNoLOS++;
-                    }
+                        c.attackCharacter(proxyT);
+                    aggroed++;
+                    continue;
                 }
+
+                // Close proximity: redirect to proxy (overrides host aggro)
+                if (runsFromProxy)
+                    c.runAway(proxyT.position);
                 else
-                {
-                    skippedNoLOS++;
-                }
+                    c.attackCharacter(proxyT);
+                aggroed++;
             }
 
             if (aggroed > 0 || (_aggroLogCounter++ % 10 == 0))
-                ModRuntime.Log?.LogInfo($"[ProxyAggro] checked {all.Length} chars, aggroed={aggroed}, noLOS={skippedNoLOS}, far={skippedFar}, alreadyTargetingOthers={skippedAlreadyTargeting}");
+                ModRuntime.Log?.LogInfo($"[ProxyAggro] checked {all.Length} chars, aggroed={aggroed}, far={skippedFar}, alreadyTargetingOthers={skippedAlreadyTargeting}");
         }
+
+
 
         private static int _aggroLogCounter;
 
@@ -391,6 +420,12 @@ namespace DarkwoodMultiplayer.Networking
                 case NetMessageType.FriendlyFire:
                     HandleFriendlyFire(FriendlyFireMessage.Deserialize(new NetReader(payload)));
                     break;
+                case NetMessageType.PlayerSound:
+                    HandlePlayerSound(PlayerSoundMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.PlayerScare:
+                    HandlePlayerScare(PlayerScareMessage.Deserialize(new NetReader(payload)));
+                    break;
                 case NetMessageType.PlayerEffectSync:
                     HandlePlayerEffectSync(PlayerEffectSyncMessage.Deserialize(new NetReader(payload)));
                     break;
@@ -456,6 +491,8 @@ namespace DarkwoodMultiplayer.Networking
                     LegsClip = state.LegsClip
                 };
 
+                _remoteProxy.RemoteRunning = state.Running;
+                _remoteProxy.RemoteLocomotion = (SecondPlayerAnimController.LocomotionState)state.LocomotionState;
                 _remoteProxy.ApplyNetworkState(netState);
                 return;
             }
@@ -464,6 +501,9 @@ namespace DarkwoodMultiplayer.Networking
             EnsureRemoteProxy();
             if (_remoteProxy == null)
                 return;
+
+            _remoteProxy.RemoteRunning = state.Running;
+            _remoteProxy.RemoteLocomotion = (SecondPlayerAnimController.LocomotionState)state.LocomotionState;
 
             var hostState = new PlayerStateNet
             {
@@ -822,6 +862,8 @@ namespace DarkwoodMultiplayer.Networking
                 return;
 
             _remoteProxy = RemotePlayerProxy.Spawn(ModRuntime.Log);
+            if (_remoteProxy != null)
+                _remoteProxy.OnFootstep += HandleProxyFootstep;
         }
 
         private void DestroyRemoteProxy()
@@ -829,8 +871,18 @@ namespace DarkwoodMultiplayer.Networking
             if (_remoteProxy == null)
                 return;
 
+            _remoteProxy.OnFootstep -= HandleProxyFootstep;
             Destroy(_remoteProxy.gameObject);
             _remoteProxy = null;
+        }
+
+        private void HandleProxyFootstep(bool running)
+        {
+            if (_remoteProxy == null) return;
+            Transform proxyT = _remoteProxy.transform;
+            float range = running ? 350f : 150f;
+            Character.alertInArea(proxyT.position, range, false, 1f);
+            PlayProxyFootstepSound(_remoteProxy, running);
         }
 
         private void SendPlayerEffects()
@@ -866,6 +918,76 @@ namespace DarkwoodMultiplayer.Networking
                 cb.invisible = msg.Invisible;
                 cb.ignoreMe = msg.IgnoreMe;
             }
+        }
+
+        private const float MaxFootstepAudioDistance = 500f;
+
+        /// <summary>
+        /// Plays a 3D-positioned footstep sound at the proxy's transform.
+        /// Detects ground type via the proxy's CharBase, then plays the
+        /// appropriate footstep clip using the local player's sound IDs.
+        /// Silently returns if the proxy is beyond MaxFootstepAudioDistance.
+        /// </summary>
+        private static void PlayProxyFootstepSound(RemotePlayerProxy proxy, bool running)
+        {
+            Transform proxyT = proxy.transform;
+            Player local = Player.Instance;
+            if (local == null) return;
+            if (Vector3.Distance(local.transform.position, proxyT.position) > MaxFootstepAudioDistance)
+                return;
+
+            CharacterSounds cs = local.GetComponent<CharacterSounds>();
+            if (cs == null) return;
+
+            CharBase proxyCB = proxy.GetComponent<CharBase>();
+            if (proxyCB != null)
+                proxyCB.checkGround();
+            GroundType gt = proxyCB != null ? proxyCB.groundType : GroundType.grass;
+
+            string soundID = null;
+            switch (gt)
+            {
+                case GroundType.grass: soundID = cs.footstepGrass; break;
+                case GroundType.wood: soundID = cs.footstepWood; break;
+                case GroundType.tiles: soundID = cs.footstepTiles; break;
+                case GroundType.bridge: soundID = cs.footstepBridge; break;
+                case GroundType.rug: soundID = cs.footstepCarpet; break;
+                case GroundType.water: soundID = cs.footstepWater; break;
+                case GroundType.infection: soundID = cs.footstepInfection; break;
+                default: soundID = cs.footstepGrass; break;
+            }
+
+            float volumeModifier = running ? 1.3f : 0.7f;
+            float vol = cs.footstepVolume * volumeModifier;
+
+            if (!string.IsNullOrEmpty(soundID))
+                AudioController.Play(soundID, proxyT, vol);
+
+            AudioController.Play("walk_clothes_noises", proxyT, vol);
+
+            if (UnityEngine.Random.Range(0f, 1f) > 1f - cs.footHitGroundSoundChance)
+            {
+                string addSound = gt == GroundType.wood ? "footsteps_wood_add" : "footstep_branches_add";
+                AudioController.Play(addSound, proxyT, 1f);
+            }
+        }
+
+        private void HandlePlayerSound(PlayerSoundMessage msg)
+        {
+            if (_role != NetworkRole.Host) return;
+            if (_remoteProxy == null) return;
+
+            Transform proxyT = _remoteProxy.transform;
+            Character.alertInArea(proxyT.position, msg.Range, msg.DangerousSound, msg.Volume, msg.Gunshot);
+        }
+
+        private void HandlePlayerScare(PlayerScareMessage msg)
+        {
+            if (_role != NetworkRole.Host) return;
+            if (_remoteProxy == null) return;
+
+            Transform proxyT = _remoteProxy.transform;
+            Character.scareInArea(proxyT.position, msg.Range);
         }
 
         public void OnNetworkReceiveUnconnected(IPEndPoint remoteEndPoint, NetPacketReader reader, UnconnectedMessageType messageType)

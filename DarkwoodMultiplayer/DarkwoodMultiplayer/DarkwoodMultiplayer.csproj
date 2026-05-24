@@ -125,6 +125,7 @@
         <Compile Include="Patches\ClientAIDisablePatches.cs"/>
         <Compile Include="Patches\HostCombatPatches.cs"/>
         <Compile Include="Patches\ClientCombatPatches.cs"/>
+        <Compile Include="Patches\ClientSoundPropagationPatches.cs"/>
         <Compile Include="Patches\ClientDeathPatches.cs"/>
         <Compile Include="Patches\ContainerSyncPatches.cs"/>
         <Compile Include="Patches\BarricadeSyncPatches.cs"/>

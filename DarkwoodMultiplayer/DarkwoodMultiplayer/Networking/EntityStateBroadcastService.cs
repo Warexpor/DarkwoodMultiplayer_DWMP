@@ -57,6 +57,10 @@ namespace DarkwoodMultiplayer.Networking
                 short clipFrame = anim != null && anim.CurrentClip != null ? (short)anim.CurrentFrame : (short)-1;
                 Vector3 rot = c.transform.eulerAngles;
 
+                string entityName = c.name;
+                if (entityName.EndsWith("(Clone)"))
+                    entityName = entityName.Substring(0, entityName.Length - 7);
+
                 _buffer[count] = new EntitySnapshotNet
                 {
                     Index = CharacterTracker.GetStableId(c),
@@ -67,7 +71,8 @@ namespace DarkwoodMultiplayer.Networking
                     Clip = clip,
                     ClipFrame = clipFrame,
                     Alive = c.alive,
-                    HealthPct = (byte)Mathf.Clamp((c.Health / Mathf.Max(c.maxHealth, 1f)) * 100f, 0, 100)
+                    HealthPct = (byte)Mathf.Clamp((c.Health / Mathf.Max(c.maxHealth, 1f)) * 100f, 0, 100),
+                    EntityName = entityName
                 };
                 count++;
             }
@@ -87,7 +92,22 @@ namespace DarkwoodMultiplayer.Networking
 
             _sendCount++;
             if (_sendCount % 10 == 0)
-                ModRuntime.Log?.LogInfo($"[HostEntitySync] sending {entityCount} entities to client");
+            {
+                System.Text.StringBuilder sb = new System.Text.StringBuilder();
+                sb.Append($"[HostEntitySync] sending {entityCount} entities: ");
+                for (int i = 0; i < entityCount; i++)
+                {
+                    Character c = CharacterTracker.FindByStableId(_buffer[i].Index);
+                    if (c != null)
+                    {
+                        sb.Append(c.name);
+                        sb.Append("(id=");
+                        sb.Append(_buffer[i].Index);
+                        sb.Append(") ");
+                    }
+                }
+                ModRuntime.Log?.LogInfo(sb.ToString());
+            }
         }
 
         private static int _sendCount;

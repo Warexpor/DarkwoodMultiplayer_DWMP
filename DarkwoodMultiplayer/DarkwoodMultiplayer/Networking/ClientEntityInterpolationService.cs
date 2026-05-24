@@ -1,6 +1,8 @@
 using DarkwoodMultiplayer.Sync;
+using HarmonyLib;
 using System.Collections.Generic;
 using UnityEngine;
+using DarkwoodMultiplayer.Players;
 
 namespace DarkwoodMultiplayer.Networking
 {
@@ -45,6 +47,7 @@ namespace DarkwoodMultiplayer.Networking
             int applied = 0;
             int skipped = 0;
             var sb = new System.Text.StringBuilder();
+            var skippedSb = new System.Text.StringBuilder();
 
             for (int i = 0; i < msg.Entities.Length; i++)
             {
@@ -58,9 +61,22 @@ namespace DarkwoodMultiplayer.Networking
                 Character c = CharacterTracker.FindByStableId(e.Index);
                 if (c == null)
                 {
-                    skipped++;
-                    continue;
+                    // Try to spawn the entity on the client so future snapshots find it
+                    c = SpawnEntityLocally(e);
+                    if (c == null)
+                    {
+                        skipped++;
+                        if (skippedSb.Length == 0)
+                            skippedSb.Append("[ClientEntitySync] SKIPPED (no local match): ");
+                        skippedSb.Append($"id={e.Index}({e.EntityName}) ");
+                        continue;
+                    }
+                    // Assign the host's stable ID so we match future snapshots
+                    CharacterTracker.AssignId(c, e.Index);
                 }
+
+                // Ensure entity is fully active for rendering
+                EnsureEntityAwake(c);
 
                 if (!_states.TryGetValue(e.Index, out var state))
                 {
@@ -100,6 +116,18 @@ namespace DarkwoodMultiplayer.Networking
                         }
                     }
                 }
+                else
+                {
+                    // Host entity is dormant (far from host, no clip playing).
+                    // Fall back to idle so client entity doesn't freeze.
+                    tk2dSpriteAnimator anim = c.GetComponent<tk2dSpriteAnimator>();
+                    if (anim != null && !anim.Playing)
+                    {
+                        string idleClip = Traverse.Create(c).Field("idleAni").GetValue<string>();
+                        if (!string.IsNullOrEmpty(idleClip) && anim.GetClipByName(idleClip) != null)
+                            anim.Play(idleClip);
+                    }
+                }
 
                 if (!e.Alive && state.alive)
                 {
@@ -132,6 +160,8 @@ namespace DarkwoodMultiplayer.Networking
                 }
                 ModRuntime.Log?.LogInfo(tb.ToString());
                 ModRuntime.Log?.LogInfo($"[ClientEntitySync] applied={applied} skipped={skipped}");
+                if (skippedSb.Length > 0)
+                    ModRuntime.Log?.LogInfo(skippedSb.ToString());
             }
         }
 
@@ -156,16 +186,28 @@ namespace DarkwoodMultiplayer.Networking
                 }
 
                 float elapsed = now - state.arrivalTime;
-                float t = Mathf.Clamp01(elapsed / SnapshotInterval);
 
                 if (elapsed > MaxInterpDelay)
                 {
+                    // No updates for too long — snap to last known target and stop
                     _displayPositions[id] = state.targetPosition;
                     _displayRotations[id] = state.targetRotY;
                     state.hasTarget = false;
                 }
+                else if (elapsed > SnapshotInterval)
+                {
+                    // Interpolation finished, next snapshot hasn't arrived yet.
+                    // Extrapolate using velocity from the last known segment
+                    // so the entity keeps moving instead of freezing.
+                    float extrapT = elapsed - SnapshotInterval;
+                    Vector3 velocity = (state.targetPosition - state.previousPosition) / SnapshotInterval;
+                    _displayPositions[id] = state.targetPosition + velocity * extrapT;
+                    _displayRotations[id] = state.targetRotY;
+                }
                 else
                 {
+                    // Normal interpolation between previous and target
+                    float t = elapsed / SnapshotInterval;
                     float smoothT = t * t * (3f - 2f * t);
                     _displayPositions[id] = Vector3.Lerp(state.previousPosition, state.targetPosition, smoothT);
                     _displayRotations[id] = Mathf.LerpAngle(state.previousRotY, state.targetRotY, smoothT);
@@ -182,6 +224,73 @@ namespace DarkwoodMultiplayer.Networking
                 _states.Remove(_staleKeys[i]);
                 _displayPositions.Remove(_staleKeys[i]);
                 _displayRotations.Remove(_staleKeys[i]);
+            }
+        }
+
+        private static void EnsureEntityAwake(Character c)
+        {
+            if (c == null) return;
+
+            GameObject go = c.gameObject;
+            if (!go.activeSelf)
+                go.SetActive(true);
+
+            if (!c.enabled)
+                c.enabled = true;
+
+            if (!c.isActive)
+                c.isActive = true;
+
+            tk2dSpriteAnimator anim = c.GetComponent<tk2dSpriteAnimator>();
+            if (anim != null && !anim.enabled)
+                anim.enabled = true;
+
+            // Force sprite alpha to fully visible
+            tk2dBaseSprite sprite = c.sprite ?? c.GetComponent<tk2dBaseSprite>();
+            if (sprite != null)
+            {
+                Renderer r = sprite.GetComponent<Renderer>();
+                if (r != null && !r.enabled)
+                    r.enabled = true;
+
+                Color col = sprite.color;
+                if (col.a <= 0f)
+                    sprite.color = new Color(col.r, col.g, col.b, 1f);
+            }
+
+            Rigidbody rb = c.GetComponent<Rigidbody>();
+            if (rb != null && !rb.isKinematic)
+                rb.isKinematic = true;
+        }
+
+        private static Character SpawnEntityLocally(EntitySnapshotNet e)
+        {
+            if (string.IsNullOrEmpty(e.EntityName))
+                return null;
+
+            try
+            {
+                string prefabPath = "Characters/" + e.EntityName;
+                Vector3 position = new Vector3(e.PosX, e.PosY, e.PosZ);
+                Quaternion rotation = Quaternion.Euler(90f, e.RotY, 0f);
+
+                GameObject go = Core.AddPrefab(prefabPath, position, rotation, null);
+                if (go == null) return null;
+
+                Character c = go.GetComponent<Character>();
+                if (c == null)
+                {
+                    Object.Destroy(go);
+                    return null;
+                }
+
+                ModRuntime.Log?.LogInfo($"[ClientEntitySync] spawned local entity: {e.EntityName}(id={e.Index}) at ({position.x:F1},{position.z:F1})");
+                return c;
+            }
+            catch (System.Exception ex)
+            {
+                ModRuntime.Log?.LogError($"[ClientEntitySync] failed to spawn {e.EntityName}: {ex.Message}");
+                return null;
             }
         }
 

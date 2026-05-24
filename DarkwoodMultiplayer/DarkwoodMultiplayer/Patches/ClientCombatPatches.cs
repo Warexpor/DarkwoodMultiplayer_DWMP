@@ -52,6 +52,16 @@ namespace DarkwoodMultiplayer.Patches
             if (__instance.type != MeleeSensor.MeleeSensorType.player)
                 return true;
 
+            // Send sound for all player melee hits (Character, Door, Window, Item)
+            var soundMsg = new PlayerSoundMessage
+            {
+                Range = 600f,
+                DangerousSound = false,
+                Volume = 1f,
+                Gunshot = false
+            };
+            LanNetworkManager.Instance?.Send(NetMessageType.PlayerSound, w => soundMsg.Serialize(w), DeliveryMethod.ReliableOrdered);
+
             Character c = _collider.GetComponent<Character>();
             if (c == null)
             {

@@ -17,7 +17,9 @@ namespace DarkwoodMultiplayer.Networking
         WorkbenchLevel = 13,
         JournalItem = 14,
         FriendlyFire = 15,
-        PlayerEffectSync = 16
+        PlayerEffectSync = 16,
+        PlayerSound = 17,
+        PlayerScare = 18
     }
 
     /// <summary>
@@ -234,6 +236,7 @@ namespace DarkwoodMultiplayer.Networking
         public short ClipFrame;
         public bool Alive;
         public byte HealthPct;
+        public string EntityName;
 
         public void Serialize(NetWriter w)
         {
@@ -244,6 +247,7 @@ namespace DarkwoodMultiplayer.Networking
             w.Put(ClipFrame);
             w.Put(Alive);
             w.Put(HealthPct);
+            w.Put(EntityName ?? "");
         }
 
         public static EntitySnapshotNet Deserialize(NetReader r) => new EntitySnapshotNet
@@ -254,7 +258,8 @@ namespace DarkwoodMultiplayer.Networking
             Clip = r.GetString(),
             ClipFrame = r.GetShort(),
             Alive = r.GetBool(),
-            HealthPct = r.GetByte()
+            HealthPct = r.GetByte(),
+            EntityName = r.GetString()
         };
     }
 
@@ -457,6 +462,50 @@ namespace DarkwoodMultiplayer.Networking
             Damage = r.GetInt(),
             AttackerPosX = r.GetFloat(), AttackerPosY = r.GetFloat(), AttackerPosZ = r.GetFloat(),
             CanCutInHalf = r.GetBool()
+        };
+    }
+
+    /// <summary>
+    /// Client → Host: the remote player made a noise (gunshot, melee hit, footstep, etc.)
+    /// The host calls Character.alertInArea at the proxy's position.
+    /// </summary>
+    public struct PlayerSoundMessage
+    {
+        public float Range;
+        public bool DangerousSound;
+        public float Volume;
+        public bool Gunshot;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(Range);
+            w.Put(DangerousSound);
+            w.Put(Volume);
+            w.Put(Gunshot);
+        }
+
+        public static PlayerSoundMessage Deserialize(NetReader r) => new PlayerSoundMessage
+        {
+            Range = r.GetFloat(),
+            DangerousSound = r.GetBool(),
+            Volume = r.GetFloat(),
+            Gunshot = r.GetBool()
+        };
+    }
+
+    /// <summary>
+    /// Client → Host: the remote player aimed a weapon, triggering scareInArea.
+    /// The host calls Character.scareInArea at the proxy's position.
+    /// </summary>
+    public struct PlayerScareMessage
+    {
+        public float Range;
+
+        public void Serialize(NetWriter w) => w.Put(Range);
+
+        public static PlayerScareMessage Deserialize(NetReader r) => new PlayerScareMessage
+        {
+            Range = r.GetFloat()
         };
     }
 

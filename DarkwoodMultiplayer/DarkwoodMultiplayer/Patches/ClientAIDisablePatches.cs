@@ -121,4 +121,26 @@ namespace DarkwoodMultiplayer.Patches
             return false;
         }
     }
+
+    [HarmonyPatch(typeof(Sniffer), "Update")]
+    public static class ClientSnifferDisablePatch
+    {
+        private static bool Prefix()
+        {
+            if (!ModConfig.IsLanMode) return true;
+            if (ModRuntime.Network == null || ModRuntime.Network.Role != NetworkRole.Client) return true;
+            return false;
+        }
+    }
+
+    [HarmonyPatch(typeof(AIPath), "Update")]
+    public static class ClientAIPathDisablePatch
+    {
+        private static bool Prefix()
+        {
+            if (!ModConfig.IsLanMode) return true;
+            if (ModRuntime.Network == null || ModRuntime.Network.Role != NetworkRole.Client) return true;
+            return false;
+        }
+    }
 }
