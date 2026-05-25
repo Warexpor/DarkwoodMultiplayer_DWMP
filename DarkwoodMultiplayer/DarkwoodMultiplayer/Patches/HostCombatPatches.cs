@@ -24,6 +24,13 @@ namespace DarkwoodMultiplayer.Patches
             if (proxy == null)
                 return true;
 
+            // Don't damage client if proxy's CharBase is dead (e.g. after client died
+            // and before respawn). The proxy is immortal during normal play but set to
+            // dead explicitly by HandlePlayerDied on the host.
+            CharBase proxyCB = proxy.GetComponent<CharBase>();
+            if (proxyCB == null || !proxyCB.alive)
+                return true;
+
             bool isPlayer = __instance.type == MeleeSensor.MeleeSensorType.player;
 
             // Drain weapon durability if it's the host player attacking
@@ -32,7 +39,14 @@ namespace DarkwoodMultiplayer.Patches
                 Player.Instance.currentItem.drainDurability(__instance.itemDurabilityDrain);
             }
 
-            int dmg = Mathf.Max(1, __instance.damage);
+            float strengthMod = 1f;
+            if (__instance.attackerTransform != null)
+            {
+                CharBase atkCB = __instance.attackerTransform.GetComponent<CharBase>();
+                if (atkCB != null)
+                    strengthMod = atkCB.strengthModifier;
+            }
+            int dmg = Mathf.Max(1, (int)((float)__instance.damage * strengthMod));
             Vector3 atkPos = __instance.attackerTransform != null
                 ? __instance.attackerTransform.position
                 : proxy.transform.position;

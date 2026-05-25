@@ -125,6 +125,13 @@ namespace DarkwoodMultiplayer.Networking
                     _physicsSendTimer = 0f;
                     SendWorldSnapshot();
                 }
+
+                _timeSyncTimer += Time.deltaTime;
+                if (_timeSyncTimer >= TimeSyncInterval)
+                {
+                    _timeSyncTimer = 0f;
+                    SendTimeSync();
+                }
             }
 
             if (_sendTimer < SendInterval)
@@ -458,6 +465,12 @@ namespace DarkwoodMultiplayer.Networking
                 case NetMessageType.SaveSync:
                     HandleSaveSync();
                     break;
+                case NetMessageType.TimeSync:
+                    HandleTimeSync(TimeSyncMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.EntitySound:
+                    HandleEntitySound(EntitySoundMessage.Deserialize(new NetReader(payload)));
+                    break;
                 }
             }
             finally
@@ -523,6 +536,18 @@ namespace DarkwoodMultiplayer.Networking
                 _remoteProxy.RemoteRunning = state.Running;
                 _remoteProxy.RemoteLocomotion = (SecondPlayerAnimController.LocomotionState)state.LocomotionState;
                 _remoteProxy.ApplyNetworkState(netState);
+
+                // If proxy was killed by HandlePlayerDied, revive it now that the
+                // client is sending state updates again (i.e. has respawned).
+                CharBase reviveCB = _remoteProxy.GetComponent<CharBase>();
+                if (reviveCB != null && !reviveCB.alive)
+                {
+                    reviveCB.alive = true;
+                    reviveCB.Health = reviveCB.maxHealth;
+                    foreach (Collider col in _remoteProxy.GetComponentsInChildren<Collider>(true))
+                        col.enabled = true;
+                    ModRuntime.Log?.LogInfo("[Death] Remote proxy revived (client respawned)");
+                }
                 return;
             }
 
@@ -784,7 +809,21 @@ namespace DarkwoodMultiplayer.Networking
         private void HandlePlayerDied()
         {
             if (_role != NetworkRole.Host) return;
-            ModRuntime.Log?.LogInfo("[Death] Client died — saving world state");
+            ModRuntime.Log?.LogInfo("[Death] Client died — killing remote proxy + saving world");
+
+            if (_remoteProxy != null)
+            {
+                CharBase cb = _remoteProxy.GetComponent<CharBase>();
+                if (cb != null)
+                {
+                    cb.alive = false;
+                    cb.Health = 0f;
+                }
+                // Disable colliders so host enemies lose interest in the proxy
+                foreach (Collider col in _remoteProxy.GetComponentsInChildren<Collider>(true))
+                    col.enabled = false;
+            }
+
             if (Singleton<SaveManager>.Instance != null)
                 Singleton<SaveManager>.Instance.Save(doJson: true);
         }
@@ -998,6 +1037,9 @@ namespace DarkwoodMultiplayer.Networking
         private float _physicsSendTimer;
         private int _physicsRecvLogCounter;
         private const float PhysicsSendInterval = 0.3f;
+
+        private float _timeSyncTimer;
+        private const float TimeSyncInterval = 2f;
 
         public void SendDoorState(DoorState door)
         {
@@ -1287,6 +1329,66 @@ namespace DarkwoodMultiplayer.Networking
 
             Transform proxyT = _remoteProxy.transform;
             Character.scareInArea(proxyT.position, msg.Range);
+        }
+
+        private void SendTimeSync()
+        {
+            if (_role != NetworkRole.Host || !IsConnected)
+                return;
+
+            var msg = new TimeSyncMessage
+            {
+                CurrentTime = Singleton<Controller>.Instance != null
+                    ? Singleton<Controller>.Instance.CurrentTime : 0,
+                Day = Singleton<Controller>.Instance != null
+                    ? Singleton<Controller>.Instance.day : 1
+            };
+            Send(NetMessageType.TimeSync, w => msg.Serialize(w));
+        }
+
+        private void HandleTimeSync(TimeSyncMessage msg)
+        {
+            if (_role != NetworkRole.Client)
+                return;
+
+            Controller ctrl = Singleton<Controller>.Instance;
+            if (ctrl == null) return;
+
+            ctrl.CurrentTime = msg.CurrentTime;
+            ctrl.day = msg.Day;
+            ctrl.refreshTime();
+
+            ModRuntime.Log?.LogInfo($"[TimeSync] synced time to day={msg.Day} time={msg.CurrentTime}");
+        }
+
+        private void HandleEntitySound(EntitySoundMessage msg)
+        {
+            if (_role != NetworkRole.Client) return;
+
+            Character c = CharacterTracker.FindByStableId(msg.HostId);
+            if (c == null || c.sounds == null) return;
+
+            switch (msg.SoundType)
+            {
+                case EntitySoundType.Growl:
+                    c.sounds.playGrowl();
+                    break;
+                case EntitySoundType.Curious:
+                    if (!string.IsNullOrEmpty(c.sounds.curious))
+                        c.sounds.playSingleInstance(c.sounds.curious);
+                    break;
+                case EntitySoundType.Aggressive:
+                    if (!string.IsNullOrEmpty(c.sounds.aggressive))
+                        c.sounds.playSingleInstance(c.sounds.aggressive);
+                    break;
+                case EntitySoundType.Defensive:
+                    if (!string.IsNullOrEmpty(c.sounds.defensive))
+                        c.sounds.playSingleInstance(c.sounds.defensive);
+                    break;
+                case EntitySoundType.Escaping:
+                    c.sounds.playEscapingLoop();
+                    break;
+            }
         }
 
         public void OnNetworkReceiveUnconnected(IPEndPoint remoteEndPoint, NetPacketReader reader, UnconnectedMessageType messageType)

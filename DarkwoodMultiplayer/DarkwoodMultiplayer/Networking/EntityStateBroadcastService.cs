@@ -76,6 +76,11 @@ namespace DarkwoodMultiplayer.Networking
                 if (entityName.EndsWith("(Clone)"))
                     entityName = entityName.Substring(0, entityName.Length - 7);
 
+                string prefabPath = "";
+                var ppc = c.GetComponent<PrefabPathComponent>();
+                if (ppc != null)
+                    prefabPath = ppc.Path;
+
                 _buffer[count] = new EntitySnapshotNet
                 {
                     Index = CharacterTracker.GetStableId(c),
@@ -87,7 +92,8 @@ namespace DarkwoodMultiplayer.Networking
                     ClipFrame = clipFrame,
                     Alive = c.alive,
                     HealthPct = (byte)Mathf.Clamp((c.Health / Mathf.Max(c.maxHealth, 1f)) * 100f, 0, 100),
-                    EntityName = entityName
+                    EntityName = entityName,
+                    PrefabPath = prefabPath
                 };
                 count++;
             }

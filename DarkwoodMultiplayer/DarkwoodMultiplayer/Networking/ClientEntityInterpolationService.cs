@@ -28,7 +28,7 @@ namespace DarkwoodMultiplayer.Networking
         private const float SnapshotInterval = 0.1f;
         private const float MaxInterpDelay = 0.3f;
         private const float PendingMatchTimeout = 0.5f;
-        private const float MatchRadius = 3f;
+        private const float MatchRadius = 8f;
         private const float PhantomCleanupDelay = 5f;
 
         private static int _lastApplyCount;
@@ -39,11 +39,16 @@ namespace DarkwoodMultiplayer.Networking
 
         private static readonly HashSet<short> _hostSyncedIds = new HashSet<short>();
         private static readonly HashSet<short> _spawnedPhantomIds = new HashSet<short>();
+        private static bool _receivedFirstSnapshot;
+
+        /// <summary>Whether at least one entity snapshot has been received from the host.</summary>
+        public static bool HasReceivedFirstSnapshot => _receivedFirstSnapshot;
 
         private struct PendingEntry
         {
             public short HostId;
             public string EntityName;
+            public string PrefabPath;
             public Vector3 Position;
             public float RotY;
             public string Clip;
@@ -76,6 +81,8 @@ namespace DarkwoodMultiplayer.Networking
                 return;
             }
 
+            _receivedFirstSnapshot = true;
+
             int applied = 0;
             int skipped = 0;
             var sb = new System.Text.StringBuilder();
@@ -93,9 +100,40 @@ namespace DarkwoodMultiplayer.Networking
                 Character c = CharacterTracker.FindByStableId(e.Index);
                 if (c != null)
                 {
-                    _hostSyncedIds.Add(e.Index);
-                    UpdateInterpolation(c, e, targetPos, ref applied);
-                    continue;
+                    // Verify the matched entity's name matches — FindByStableId can return
+                    // the wrong entity when local stable IDs collide with host IDs.
+                    string cname = c.name;
+                    if (cname.EndsWith("(Clone)"))
+                        cname = cname.Substring(0, cname.Length - 7);
+                    bool nameMatches = string.Equals(cname, e.EntityName, System.StringComparison.OrdinalIgnoreCase);
+
+                    if (nameMatches)
+                    {
+                        // If the matched entity is a phantom, check if a real local entity
+                        // now exists nearby (e.g. world chunk just loaded). If so, replace
+                        // the phantom with the real entity to avoid duplicates.
+                        if (_spawnedPhantomIds.Contains(e.Index))
+                        {
+                            Character real = CharacterTracker.FindByPositionAndName(targetPos, e.EntityName, MatchRadius, _hostSyncedIds);
+                            if (real != null && real != c)
+                            {
+                                CharacterTracker.AssignId(real, e.Index);
+                                _hostSyncedIds.Add(e.Index);
+                                _spawnedPhantomIds.Remove(e.Index);
+                                Object.Destroy(c.gameObject);
+                                c = real;
+                                ModRuntime.Log?.LogInfo($"[ClientEntitySync] replaced phantom with real entity: {e.EntityName}(id={e.Index})");
+                            }
+                        }
+                        _hostSyncedIds.Add(e.Index);
+                        UpdateInterpolation(c, e, targetPos, ref applied);
+                        continue;
+                    }
+
+                    // Name mismatch — the stable ID hit a wrong local entity.
+                    // Reset its ID so position-based matching can find the correct entity.
+                    ModRuntime.Log?.LogInfo($"[ClientEntitySync] stable ID collision: id={e.Index} found {c.name} but expected {e.EntityName}");
+                    CharacterTracker.AssignId(c, 0);
                 }
 
                 // Not found by ID — try position + name matching
@@ -115,6 +153,7 @@ namespace DarkwoodMultiplayer.Networking
                 {
                     HostId = e.Index,
                     EntityName = e.EntityName,
+                    PrefabPath = e.PrefabPath,
                     Position = targetPos,
                     RotY = e.RotY,
                     Clip = e.Clip,
@@ -226,14 +265,14 @@ namespace DarkwoodMultiplayer.Networking
             {
                 PendingEntry p = _pendingMatches[i];
 
-                // Try position matching again
+                // Try position matching again (tight radius)
                 Character c = CharacterTracker.FindByPositionAndName(p.Position, p.EntityName, MatchRadius, _hostSyncedIds);
                 if (c != null)
                 {
                     CharacterTracker.AssignId(c, p.HostId);
                     _hostSyncedIds.Add(p.HostId);
                     EnsureEntityAwake(c);
-                    ModRuntime.Log?.LogInfo($"[ClientEntitySync] pending matched: {p.EntityName}(id={p.HostId})");
+                    ModRuntime.Log?.LogInfo($"[ClientEntitySync] pending matched (tight): {p.EntityName}(id={p.HostId})");
 
                     if (!_states.TryGetValue(p.HostId, out var state))
                     {
@@ -258,10 +297,88 @@ namespace DarkwoodMultiplayer.Networking
                     continue;
                 }
 
+                // Fallback: name-only match (unlimited distance).
+                // Catches entities far away (e.g. in an unloaded chunk) that
+                // share the same name but are outside the tight MatchRadius.
+                if (!string.IsNullOrEmpty(p.EntityName))
+                {
+                    Character best = null;
+                    float bestDistSq = float.MaxValue;
+
+                    Character[] all = CharacterTracker.GetAll();
+                    for (int ci = 0; ci < all.Length; ci++)
+                    {
+                        Character candidate = all[ci];
+                        if (candidate == null) continue;
+
+                        // Skip if this character already has the host ID
+                        if (CharacterTracker.TryGetStableId(candidate, out short existingId) && existingId == p.HostId)
+                            continue;
+
+                        string cname = candidate.name;
+                        if (cname.EndsWith("(Clone)"))
+                            cname = cname.Substring(0, cname.Length - 7);
+
+                        if (!string.Equals(cname, p.EntityName, System.StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        // Skip if this character is already host-synced under a different ID
+                        if (CharacterTracker.TryGetStableId(candidate, out short otherId) && _hostSyncedIds.Contains(otherId))
+                            continue;
+
+                        float dsq = (candidate.transform.position - p.Position).sqrMagnitude;
+                        if (dsq < bestDistSq)
+                        {
+                            bestDistSq = dsq;
+                            best = candidate;
+                        }
+                    }
+
+                    if (best != null)
+                    {
+                        ModRuntime.Log?.LogInfo($"[ClientEntitySync] pending matched (name-only): {p.EntityName}(id={p.HostId}) dist={Mathf.Sqrt(bestDistSq):F1}");
+                        c = best;
+                        CharacterTracker.AssignId(c, p.HostId);
+                        _hostSyncedIds.Add(p.HostId);
+                        EnsureEntityAwake(c);
+
+                        if (!_states.TryGetValue(p.HostId, out var state))
+                        {
+                            state = new EntityInterpState { isFirst = true };
+                            _states[p.HostId] = state;
+                        }
+                        state.staleSince = 0f;
+
+                        _displayPositions[p.HostId] = c.transform.position;
+                        _displayRotations[p.HostId] = c.transform.eulerAngles.y;
+                        state.isFirst = false;
+
+                        state.previousPosition = c.transform.position;
+                        state.previousRotY = c.transform.eulerAngles.y;
+                        state.targetPosition = p.Position;
+                        state.targetRotY = p.RotY;
+                        state.arrivalTime = now;
+                        state.hasTarget = true;
+                        state.alive = p.Alive;
+
+                        _pendingMatches.RemoveAt(i);
+                        continue;
+                    }
+                }
+
                 // Timeout — spawn on-demand
                 if (now - p.TimeAdded > PendingMatchTimeout)
                 {
-                    c = SpawnEntityLocally(p.EntityName, p.Position, p.RotY);
+                    // If we already spawned a phantom for this host ID (subsequently
+                    // destroyed by world cleanup), don't spawn another — just drop it.
+                    if (_hostSyncedIds.Contains(p.HostId))
+                    {
+                        ModRuntime.Log?.LogInfo($"[ClientEntitySync] dropping pending (already host-synced): {p.EntityName}(id={p.HostId})");
+                        _pendingMatches.RemoveAt(i);
+                        continue;
+                    }
+
+                    c = SpawnEntityLocally(p.EntityName, p.PrefabPath, p.Position, p.RotY);
                     if (c != null)
                     {
                         CharacterTracker.AssignId(c, p.HostId);
@@ -420,17 +537,17 @@ namespace DarkwoodMultiplayer.Networking
                 rb.isKinematic = true;
         }
 
-        private static Character SpawnEntityLocally(string entityName, Vector3 position, float rotY)
+        private static Character SpawnEntityLocally(string entityName, string prefabPath, Vector3 position, float rotY)
         {
-            if (string.IsNullOrEmpty(entityName))
+            if (string.IsNullOrEmpty(entityName) && string.IsNullOrEmpty(prefabPath))
                 return null;
 
+            string path = !string.IsNullOrEmpty(prefabPath) ? prefabPath : "Characters/" + entityName;
             try
             {
-                string prefabPath = "Characters/" + entityName;
                 Quaternion rotation = Quaternion.Euler(90f, rotY, 0f);
 
-                GameObject go = Core.AddPrefab(prefabPath, position, rotation, null);
+                GameObject go = Core.AddPrefab(path, position, rotation, null);
                 if (go == null) return null;
 
                 Character c = go.GetComponent<Character>();
@@ -453,12 +570,12 @@ namespace DarkwoodMultiplayer.Networking
                     }
                 }
 
-                ModRuntime.Log?.LogInfo($"[ClientEntitySync] spawned local entity: {entityName} at ({position.x:F1},{position.z:F1})");
+                ModRuntime.Log?.LogInfo($"[ClientEntitySync] spawned local entity: {path} at ({position.x:F1},{position.z:F1})");
                 return c;
             }
             catch (System.Exception ex)
             {
-                ModRuntime.Log?.LogError($"[ClientEntitySync] failed to spawn {entityName}: {ex.Message}");
+                ModRuntime.Log?.LogError($"[ClientEntitySync] failed to spawn {path}: {ex.Message}");
                 return null;
             }
         }
@@ -475,6 +592,7 @@ namespace DarkwoodMultiplayer.Networking
             _lastSkippedCount = 0;
             _totalApplied = 0;
             _totalSkipped = 0;
+            _receivedFirstSnapshot = false;
         }
 
         public static void LogStats()

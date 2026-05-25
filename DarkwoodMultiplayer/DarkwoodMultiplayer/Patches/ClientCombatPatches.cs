@@ -30,7 +30,14 @@ namespace DarkwoodMultiplayer.Patches
             if (local != null && local.currentItem != null)
                 local.currentItem.drainDurability(__instance.itemDurabilityDrain);
 
-            int dmg = Mathf.Max(1, __instance.damage);
+            float strengthMod = 1f;
+            if (local != null)
+            {
+                CharBase cb = local.GetComponent<CharBase>();
+                if (cb != null)
+                    strengthMod = cb.strengthModifier;
+            }
+            int dmg = Mathf.Max(1, (int)((float)__instance.damage * strengthMod));
             Vector3 pos = local != null ? local.transform.position : proxy.transform.position;
 
             var msg = new FriendlyFireMessage
@@ -81,6 +88,10 @@ namespace DarkwoodMultiplayer.Patches
             }
             if (c == null) return true;
 
+            // Play hit sound locally since vanilla getHit is skipped
+            if (c.sounds != null)
+                c.sounds.playGetHitByAxe1();
+
             // Don't apply damage locally — host is authoritative
             short nameHash = CharacterTracker.GetStableId(c);
 
@@ -88,10 +99,18 @@ namespace DarkwoodMultiplayer.Patches
                 ? Player.Instance.transform.position
                 : c.transform.position;
 
+            float strengthMod = 1f;
+            if (Player.Instance != null)
+            {
+                CharBase cb = Player.Instance.GetComponent<CharBase>();
+                if (cb != null)
+                    strengthMod = cb.strengthModifier;
+            }
+
             var msg = new PlayerAttackMessage
             {
                 TargetNameHash = nameHash,
-                Damage = __instance.damage,
+                Damage = (int)((float)__instance.damage * strengthMod),
                 AttackerPosX = pos.x,
                 AttackerPosY = pos.y,
                 AttackerPosZ = pos.z

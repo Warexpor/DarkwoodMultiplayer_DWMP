@@ -44,7 +44,11 @@ namespace DarkwoodMultiplayer.Networking
         /// <summary>Dragged object position/rotation sync.</summary>
         DragSync = 19,
         /// <summary>Trigger a save on the remote peer.</summary>
-        SaveSync = 20
+        SaveSync = 20,
+        /// <summary>Host broadcasts current game time to the client.</summary>
+        TimeSync = 21,
+        /// <summary>Host broadcasts an entity sound event to the client.</summary>
+        EntitySound = 22
     }
 
     /// <summary>
@@ -397,6 +401,8 @@ namespace DarkwoodMultiplayer.Networking
         public byte HealthPct;
         /// <summary>Entity prefab name (used for spawning on client).</summary>
         public string EntityName;
+        /// <summary>Full prefab resource path (e.g. "Characters/NPC/NightTrader") for precise phantom spawning.</summary>
+        public string PrefabPath;
 
         /// <summary>Serializes this snapshot into the provided writer.</summary>
         public void Serialize(NetWriter w)
@@ -409,6 +415,7 @@ namespace DarkwoodMultiplayer.Networking
             w.Put(Alive);
             w.Put(HealthPct);
             w.Put(EntityName ?? "");
+            w.Put(PrefabPath ?? "");
         }
 
         /// <summary>Deserializes an EntitySnapshotNet from the provided reader.</summary>
@@ -421,7 +428,8 @@ namespace DarkwoodMultiplayer.Networking
             ClipFrame = r.GetShort(),
             Alive = r.GetBool(),
             HealthPct = r.GetByte(),
-            EntityName = r.GetString()
+            EntityName = r.GetString(),
+            PrefabPath = r.GetString()
         };
     }
 
@@ -532,6 +540,45 @@ namespace DarkwoodMultiplayer.Networking
         public void Serialize(NetWriter w) { }
         /// <summary>Deserializes a PlayerDiedMessage (no data).</summary>
         public static PlayerDiedMessage Deserialize(NetReader r) => new PlayerDiedMessage();
+    }
+
+    /// <summary>Type of entity sound event for host→client sync.</summary>
+    public enum EntitySoundType : byte
+    {
+        Growl = 0,
+        Attack1 = 1,
+        Attack2 = 2,
+        Death = 3,
+        Curious = 4,
+        Aggressive = 5,
+        Defensive = 6,
+        Escaping = 7,
+        Idle = 8,
+        GetHit = 9,
+    }
+
+    /// <summary>
+    /// Host→Client: an entity on the host played a sound. The client replays
+    /// it locally at the corresponding entity's position for spatial audio.
+    /// </summary>
+    public struct EntitySoundMessage
+    {
+        /// <summary>Host-side stable ID of the entity that played the sound.</summary>
+        public short HostId;
+        /// <summary>Which sound was played.</summary>
+        public EntitySoundType SoundType;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(HostId);
+            w.Put((byte)SoundType);
+        }
+
+        public static EntitySoundMessage Deserialize(NetReader r) => new EntitySoundMessage
+        {
+            HostId = r.GetShort(),
+            SoundType = (EntitySoundType)r.GetByte()
+        };
     }
 
     /// <summary>
@@ -863,5 +910,31 @@ namespace DarkwoodMultiplayer.Networking
         public void Serialize(NetWriter w) { }
         /// <summary>Deserializes a SaveSyncMessage.</summary>
         public static SaveSyncMessage Deserialize(NetReader r) => new SaveSyncMessage();
+    }
+
+    /// <summary>
+    /// Host broadcasts current game time and day to the client so the
+    /// day/night cycle stays in sync across peers.
+    /// </summary>
+    public struct TimeSyncMessage
+    {
+        /// <summary>Current in-game minute (0–1439).</summary>
+        public int CurrentTime;
+        /// <summary>Current in-game day number.</summary>
+        public int Day;
+
+        /// <summary>Serializes this message into the provided writer.</summary>
+        public void Serialize(NetWriter w)
+        {
+            w.Put(CurrentTime);
+            w.Put(Day);
+        }
+
+        /// <summary>Deserializes a TimeSyncMessage from the provided reader.</summary>
+        public static TimeSyncMessage Deserialize(NetReader r) => new TimeSyncMessage
+        {
+            CurrentTime = r.GetInt(),
+            Day = r.GetInt()
+        };
     }
 }

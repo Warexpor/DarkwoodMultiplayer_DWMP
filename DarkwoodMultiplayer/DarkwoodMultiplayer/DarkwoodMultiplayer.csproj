@@ -129,6 +129,9 @@
         <Compile Include="Patches\JournalSyncPatches.cs"/>
         <Compile Include="Patches\SaveSyncPatches.cs"/>
         <Compile Include="Properties\AssemblyInfo.cs"/>
+        <Compile Include="Patches\ClientWorldPatches.cs"/>
+        <Compile Include="Patches\NightSpawnProxyPatch.cs"/>
+        <Compile Include="Patches\EntitySoundSyncPatches.cs"/>
     </ItemGroup>
     <ItemGroup>
       <None Include="App.config" />
@@ -139,6 +142,7 @@
         <Compile Include="Sync\DoorSyncPatches.cs"/>
         <Compile Include="Sync\CharacterTracker.cs"/>
         <Compile Include="Sync\EntityTrackers.cs"/>
+        <Compile Include="Sync\PrefabPathComponent.cs"/>
     </ItemGroup>
     <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets"/>
     <Target Name="AfterBuild">

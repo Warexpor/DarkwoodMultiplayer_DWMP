@@ -11,6 +11,12 @@ namespace DarkwoodMultiplayer.Patches
                 return false;
             if (c == null || c.name.Contains("RemotePlayer"))
                 return false;
+
+            // Before the first host snapshot arrives, freeze all NPCs to prevent
+            // client-side AI from acting on stale save data (pre-sync window).
+            if (!ClientEntityInterpolationService.HasReceivedFirstSnapshot)
+                return true;
+
             return ClientEntityInterpolationService.IsHostSynced(c);
         }
     }
