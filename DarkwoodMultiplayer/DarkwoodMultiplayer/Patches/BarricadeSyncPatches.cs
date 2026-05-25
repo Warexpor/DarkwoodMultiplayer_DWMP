@@ -11,19 +11,20 @@ namespace DarkwoodMultiplayer.Patches
     /// </summary>
     internal static class BarricadeSyncHelpers
     {
-        internal static void SendBarricadeEvent(Vector3 pos, bool isWindow, BarricadeAction action, int health, bool playerBarricade)
+        internal static void SendBarricadeEvent(Vector3 pos, byte targetType, BarricadeAction action, int health, bool playerBarricade, int mainHealth = -1, int damageAmount = -1)
         {
             if (LanNetworkManager.IsApplyingRemoteState) return;
             if (ModRuntime.Network == null || !ModRuntime.Network.IsConnected) return;
-            // Round position to avoid floating-point mismatch between peers
             Vector3 key = new Vector3((float)System.Math.Round(pos.x, 1), (float)System.Math.Round(pos.y, 1), (float)System.Math.Round(pos.z, 1));
             var msg = new BarricadeEventMessage
             {
                 PosX = key.x, PosY = key.y, PosZ = key.z,
-                IsWindow = isWindow ? (byte)1 : (byte)0,
+                IsWindow = targetType,
                 Action = action,
                 Health = health,
-                PlayerBarricade = playerBarricade
+                PlayerBarricade = playerBarricade,
+                MainHealth = mainHealth,
+                DamageAmount = damageAmount
             };
             LanNetworkManager.Instance.Send(NetMessageType.BarricadeEvent, w => msg.Serialize(w), DeliveryMethod.ReliableOrdered);
         }
@@ -40,7 +41,7 @@ namespace DarkwoodMultiplayer.Patches
             if (ModRuntime.Network == null || !ModRuntime.Network.IsConnected) return;
             if (__instance.barricaded)
             {
-                BarricadeSyncHelpers.SendBarricadeEvent(__instance.transform.position, false, BarricadeAction.Built, __instance.barricadeHealth, byPlayer);
+                BarricadeSyncHelpers.SendBarricadeEvent(__instance.transform.position, 0, BarricadeAction.Built, __instance.barricadeHealth, byPlayer);
             }
         }
     }
@@ -54,7 +55,7 @@ namespace DarkwoodMultiplayer.Patches
         private static void Postfix(Door __instance, bool silent)
         {
             if (ModRuntime.Network == null || !ModRuntime.Network.IsConnected) return;
-            BarricadeSyncHelpers.SendBarricadeEvent(__instance.transform.position, false, BarricadeAction.Destroyed, 0, false);
+            BarricadeSyncHelpers.SendBarricadeEvent(__instance.transform.position, 0, BarricadeAction.Destroyed, 0, false);
         }
     }
 
@@ -69,7 +70,7 @@ namespace DarkwoodMultiplayer.Patches
             if (ModRuntime.Network == null || !ModRuntime.Network.IsConnected) return;
             if (__instance.barricaded)
             {
-                BarricadeSyncHelpers.SendBarricadeEvent(__instance.transform.position, true, BarricadeAction.Built, __instance.barricadeHealth, byPlayer);
+                BarricadeSyncHelpers.SendBarricadeEvent(__instance.transform.position, 1, BarricadeAction.Built, __instance.barricadeHealth, byPlayer);
             }
         }
     }
@@ -83,13 +84,12 @@ namespace DarkwoodMultiplayer.Patches
         private static void Postfix(Window __instance, bool silent)
         {
             if (ModRuntime.Network == null || !ModRuntime.Network.IsConnected) return;
-            BarricadeSyncHelpers.SendBarricadeEvent(__instance.transform.position, true, BarricadeAction.Destroyed, 0, false);
+            BarricadeSyncHelpers.SendBarricadeEvent(__instance.transform.position, 1, BarricadeAction.Destroyed, 0, false);
         }
     }
 
     /// <summary>
-    /// Syncs barricade damage/health changes on doors to remote clients
-    /// after getHit is called (including destruction when health reaches zero).
+    /// Syncs ALL door damage (barricade and main health) to the remote peer.
     /// </summary>
     [HarmonyPatch(typeof(Door), "getHit", new[] { typeof(int), typeof(Transform), typeof(bool), typeof(bool) })]
     public static class DoorGetHitPatch
@@ -97,12 +97,23 @@ namespace DarkwoodMultiplayer.Patches
         private static void Postfix(Door __instance, int damage)
         {
             if (ModRuntime.Network == null || !ModRuntime.Network.IsConnected) return;
-            if (!__instance.barricaded && __instance.barricadeHealth <= 0) return;
 
-            BarricadeSyncHelpers.SendBarricadeEvent(
-                __instance.transform.position, false,
-                __instance.barricadeHealth <= 0 ? BarricadeAction.Destroyed : BarricadeAction.Damaged,
-                __instance.barricadeHealth, __instance.playerBarricade);
+            if (__instance.barricaded)
+            {
+                BarricadeSyncHelpers.SendBarricadeEvent(
+                    __instance.transform.position, 0,
+                    __instance.barricadeHealth <= 0 ? BarricadeAction.Destroyed : BarricadeAction.Damaged,
+                    __instance.barricadeHealth, __instance.playerBarricade,
+                    __instance.destroyed ? -1 : __instance.health,
+                    damage);
+            }
+            else
+            {
+                BarricadeSyncHelpers.SendBarricadeEvent(
+                    __instance.transform.position, 0,
+                    __instance.destroyed ? BarricadeAction.Destroyed : BarricadeAction.Damaged,
+                    0, false, __instance.health, damage);
+            }
         }
     }
 
@@ -119,9 +130,45 @@ namespace DarkwoodMultiplayer.Patches
             if (!__instance.barricaded) return;
 
             BarricadeSyncHelpers.SendBarricadeEvent(
-                __instance.transform.position, true,
+                __instance.transform.position, 1,
                 __instance.barricadeHealth <= 0 ? BarricadeAction.Destroyed : BarricadeAction.Damaged,
                 __instance.barricadeHealth, __instance.playerBarricade);
+        }
+    }
+
+    /// <summary>
+    /// Syncs damage to destructible world items (wardrobes, furniture, etc.).
+    /// Captures the position in a Prefix because Item.getHit → die() may move
+    /// the transform before the Postfix runs.
+    /// </summary>
+    [HarmonyPatch(typeof(Item), "getHit", new[] { typeof(int), typeof(Transform), typeof(bool) })]
+    public static class ItemGetHitPatch
+    {
+        private static Vector3 _prePos;
+
+        [HarmonyPrefix]
+        private static void Prefix(Item __instance)
+        {
+            _prePos = __instance.transform.position;
+        }
+
+        [HarmonyPostfix]
+        private static void Postfix(Item __instance, int damage)
+        {
+            if (ModRuntime.Network == null || !ModRuntime.Network.IsConnected) return;
+            if (LanNetworkManager.IsApplyingRemoteState) return;
+            if (!__instance.destructible) { ModRuntime.Log?.LogInfo("[ItemHit] not destructible: " + __instance.name); return; }
+
+            Vector3 pos = _prePos;
+            bool destroyed = __instance.destroyed;
+            int health = __instance.health;
+
+            ModRuntime.Log?.LogInfo("[ItemHit] " + __instance.name + " dmg=" + damage + " health=" + health + " destroyed=" + destroyed + " pos=" + pos);
+
+            BarricadeSyncHelpers.SendBarricadeEvent(
+                pos, 2,
+                destroyed ? BarricadeAction.Destroyed : BarricadeAction.Damaged,
+                health, false, damageAmount: damage);
         }
     }
 }

@@ -707,7 +707,8 @@ namespace DarkwoodMultiplayer.Networking
     }
 
     /// <summary>
-    /// Syncs a barricade state change (built/destroyed/damaged) to the remote client.
+    /// Syncs a barricade/object state change (built/destroyed/damaged) to the remote client.
+    /// IsWindow: 0 = door, 1 = window, 2 = generic item (wardrobe, furniture, etc.)
     /// </summary>
     public struct BarricadeEventMessage
     {
@@ -717,14 +718,18 @@ namespace DarkwoodMultiplayer.Networking
         public float PosY;
         /// <summary>Barricade world position Z.</summary>
         public float PosZ;
-        /// <summary>0 = door barricade, 1 = window barricade.</summary>
+        /// <summary>0 = door, 1 = window barricade, 2 = generic item.</summary>
         public byte IsWindow;
         /// <summary>Type of barricade action.</summary>
         public BarricadeAction Action;
-        /// <summary>Remaining barricade health.</summary>
+        /// <summary>Remaining barricade health (for doors/windows) or remaining health (for items).</summary>
         public int Health;
         /// <summary>Whether this is a player-built barricade.</summary>
         public bool PlayerBarricade;
+        /// <summary>Door main health (for main-door damage, -1 = no change).</summary>
+        public int MainHealth;
+        /// <summary>Original damage amount (for replaying FX/sounds on receiver, -1 = unknown).</summary>
+        public int DamageAmount;
 
         /// <summary>Serializes this message into the provided writer.</summary>
         public void Serialize(NetWriter w)
@@ -734,6 +739,8 @@ namespace DarkwoodMultiplayer.Networking
             w.Put((byte)Action);
             w.Put(Health);
             w.Put(PlayerBarricade);
+            w.Put(MainHealth);
+            w.Put(DamageAmount);
         }
 
         /// <summary>Deserializes a BarricadeEventMessage from the provided reader.</summary>
@@ -743,7 +750,9 @@ namespace DarkwoodMultiplayer.Networking
             IsWindow = r.GetByte(),
             Action = (BarricadeAction)r.GetByte(),
             Health = r.GetInt(),
-            PlayerBarricade = r.GetBool()
+            PlayerBarricade = r.GetBool(),
+            MainHealth = r.GetInt(),
+            DamageAmount = r.GetInt()
         };
     }
 
@@ -1099,17 +1108,21 @@ namespace DarkwoodMultiplayer.Networking
     {
         public string SoundId;
         public float Volume;
+        /// <summary>World position where the sound originated. NaN if position is unknown.</summary>
+        public float PosX, PosY, PosZ;
 
         public void Serialize(NetWriter w)
         {
             w.Put(SoundId ?? "");
             w.Put(Volume);
+            w.Put(PosX); w.Put(PosY); w.Put(PosZ);
         }
 
         public static PlayerAudioMessage Deserialize(NetReader r) => new PlayerAudioMessage
         {
             SoundId = r.GetString(),
-            Volume = r.GetFloat()
+            Volume = r.GetFloat(),
+            PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat()
         };
     }
 

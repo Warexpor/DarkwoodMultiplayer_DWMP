@@ -7,7 +7,7 @@ namespace DarkwoodMultiplayer.Patches
 {
     internal static class PlayerAudioHelper
     {
-        internal static void ForwardSound(string audioID, float volume)
+        internal static void ForwardSound(string audioID, float volume, Vector3 position)
         {
             if (string.IsNullOrEmpty(audioID)) return;
             var net = ModRuntime.Network;
@@ -25,7 +25,8 @@ namespace DarkwoodMultiplayer.Patches
             net.SendPlayerAudio(new PlayerAudioMessage
             {
                 SoundId = audioID,
-                Volume = Mathf.Clamp01(volume)
+                Volume = Mathf.Clamp01(volume),
+                PosX = position.x, PosY = position.y, PosZ = position.z
             });
         }
 
@@ -51,7 +52,8 @@ namespace DarkwoodMultiplayer.Patches
         private static void Prefix(string audioID, Transform parentObj)
         {
             if (!PlayerAudioHelper.IsPlayerTransform(parentObj)) return;
-            PlayerAudioHelper.ForwardSound(audioID, 1f);
+            Vector3 pos = parentObj != null ? parentObj.position : Player.Instance.transform.position;
+            PlayerAudioHelper.ForwardSound(audioID, 1f, pos);
         }
     }
 
@@ -63,7 +65,8 @@ namespace DarkwoodMultiplayer.Patches
         private static void Prefix(string audioID, Transform parentObj, float volume)
         {
             if (!PlayerAudioHelper.IsPlayerTransform(parentObj)) return;
-            PlayerAudioHelper.ForwardSound(audioID, volume);
+            Vector3 pos = parentObj != null ? parentObj.position : Player.Instance.transform.position;
+            PlayerAudioHelper.ForwardSound(audioID, volume, pos);
         }
     }
 
@@ -74,15 +77,17 @@ namespace DarkwoodMultiplayer.Patches
         [HarmonyPrefix]
         private static void Prefix(string audioID, Vector3 worldPosition, Transform parentObj)
         {
+            Vector3 pos = worldPosition;
             if (parentObj != null)
             {
                 if (!PlayerAudioHelper.IsPlayerTransform(parentObj)) return;
+                pos = parentObj.position;
             }
             else
             {
                 if (!PlayerAudioHelper.IsNearPlayer(worldPosition)) return;
             }
-            PlayerAudioHelper.ForwardSound(audioID, 1f);
+            PlayerAudioHelper.ForwardSound(audioID, 1f, pos);
         }
     }
 }

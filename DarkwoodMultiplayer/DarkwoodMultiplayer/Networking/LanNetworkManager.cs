@@ -909,6 +909,13 @@ namespace DarkwoodMultiplayer.Networking
         private void HandleBarricadeEvent(BarricadeEventMessage msg)
         {
             Vector3 pos = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
+
+            if (msg.IsWindow == 2)
+            {
+                HandleItemDamageEvent(pos, msg);
+                return;
+            }
+
             if (msg.IsWindow == 0)
             {
                 Door door = FindDoorByPos(pos);
@@ -921,15 +928,40 @@ namespace DarkwoodMultiplayer.Networking
                     door.barricadeHealth = msg.Health;
                     door.setToBarricaded();
                 }
-                else if (msg.Action == BarricadeAction.Destroyed)
+                else
                 {
-                    door.destroyBarricade(silent: true);
-                }
-                else if (msg.Action == BarricadeAction.Damaged)
-                {
-                    door.barricadeHealth = msg.Health;
-                    if (door.barricadeHealth <= 0)
-                        door.destroyBarricade(silent: true);
+                    // Apply barricade state changes
+                    if (msg.Action == BarricadeAction.Destroyed)
+                    {
+                        if (door.barricaded)
+                            door.destroyBarricade(silent: true);
+                    }
+                    else if (msg.Action == BarricadeAction.Damaged)
+                    {
+                        if (door.barricaded)
+                        {
+                            door.barricadeHealth = msg.Health;
+                            if (door.barricadeHealth <= 0)
+                                door.destroyBarricade(silent: true);
+                        }
+                    }
+
+                    // Apply main health changes + FX
+                    if (msg.MainHealth >= 0)
+                    {
+                        if (msg.MainHealth <= 0 && !door.destroyed)
+                        {
+                            door.destroyDoor();
+                        }
+                        else
+                        {
+                            Traverse.Create(door).Field("health").SetValue(msg.MainHealth);
+                            // Spawn door-hit FX so remote peer sees wood chips
+                            Core.AddPrefab("particles/door_hit_melee", door.body.position,
+                                Quaternion.Euler(90f, 0f, 0f), null, worldSpace: true);
+                            AudioController.Play("woodenObject_hit", door.body);
+                        }
+                    }
                 }
             }
             else
@@ -956,6 +988,41 @@ namespace DarkwoodMultiplayer.Networking
                     if (msg.Health <= 0)
                         window.destroyBarricade(silent: true);
                 }
+            }
+        }
+
+        private void HandleItemDamageEvent(Vector3 pos, BarricadeEventMessage msg)
+        {
+            Collider[] nearby = Physics.OverlapSphere(pos, 1f);
+            ModRuntime.Log?.LogInfo("[ItemDmgEvent] searching at " + pos + " found " + nearby.Length + " colliders");
+            for (int i = 0; i < nearby.Length; i++)
+            {
+                if (nearby[i] == null) continue;
+                Item item = nearby[i].GetComponentInParent<Item>();
+                if (item == null) { ModRuntime.Log?.LogInfo("[ItemDmgEvent] collider " + nearby[i].name + " has no Item"); continue; }
+                ModRuntime.Log?.LogInfo("[ItemDmgEvent] found " + item.name + " health=" + item.health + " destructible=" + item.destructible + " destroyed=" + item.destroyed);
+                if (!item.destructible) continue;
+
+                if (msg.Action == BarricadeAction.Destroyed || (msg.Action == BarricadeAction.Damaged && msg.Health <= 0))
+                {
+                    ModRuntime.Log?.LogInfo("[ItemDmgEvent] destroying " + item.name);
+                    if (!item.destroyed)
+                        item.die();
+                }
+                else
+                {
+                    ModRuntime.Log?.LogInfo("[ItemDmgEvent] setting " + item.name + " health to " + msg.Health);
+                    Traverse.Create(item).Field("health").SetValue(msg.Health);
+                    // Spawn item hit particle FX if available
+                    if (item.hitParticlePrefabObject != null)
+                    {
+                        Core.AddPrefab(item.hitParticlePrefabObject, item.transform.position,
+                            Quaternion.Euler(90f, 0f, 0f), null);
+                    }
+                    if (!string.IsNullOrEmpty(item.hitSound))
+                        AudioController.Play(item.hitSound, item.transform.position);
+                }
+                break;
             }
         }
 
@@ -1040,6 +1107,23 @@ namespace DarkwoodMultiplayer.Networking
             Transform atkTransform = _remoteProxy != null ? _remoteProxy.transform : host.transform;
             host.getHit(msg.Damage, atkTransform, msg.CanCutInHalf, byPlayer: true, canInterrupt: true);
             ModRuntime.Log?.LogInfo("[FriendlyFire] Host took " + msg.Damage + " damage from client");
+
+            // Find hit point on host via raycast from attacker
+            Vector3 hitPoint = host.transform.position;
+            Vector3 toHost = (host.transform.position - atkPos).normalized;
+            float dist = Vector3.Distance(atkPos, host.transform.position) + 0.5f;
+            if (Physics.Raycast(atkPos, toHost, out RaycastHit hostHit, dist, 18909185))
+                hitPoint = hostHit.point;
+
+            string bloodPrefab = host.inWater ? "FX/Bloodsplats/Shotsplat" : "FX/Bloodsplats/Shotsplat_stay";
+            float rotY = host.transform.eulerAngles.y + UnityEngine.Random.Range(-40f, 40f);
+            Send(NetMessageType.BulletImpact, w => new BulletImpactMessage
+            {
+                PrefabName = bloodPrefab,
+                PoolName = "",
+                PosX = hitPoint.x, PosY = hitPoint.y, PosZ = hitPoint.z,
+                RotX = 90f, RotY = rotY, RotZ = 0f
+            }.Serialize(w), DeliveryMethod.ReliableOrdered);
         }
 
         private static Inventory FindInventoryByPos(Vector3 pos)
@@ -1634,16 +1718,28 @@ namespace DarkwoodMultiplayer.Networking
 
         private void HandlePlayerAudio(PlayerAudioMessage msg)
         {
-            if (_remoteProxy == null) return;
             if (string.IsNullOrEmpty(msg.SoundId)) return;
 
-            Transform proxyT = _remoteProxy.transform;
+            Vector3 pos = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
+            bool hasPos = !float.IsNaN(msg.PosX);
+
+            // If no valid position, fall back to proxy transform
+            if (!hasPos)
+            {
+                if (_remoteProxy == null) return;
+                pos = _remoteProxy.transform.position;
+            }
 
             // Only play sounds within audible range to the local player
             Player local = Player.Instance;
-            if (local != null && Vector3.Distance(local.transform.position, proxyT.position) > 500f) return;
+            if (local != null && Vector3.Distance(local.transform.position, pos) > 500f) return;
 
-            AudioController.Play(msg.SoundId, proxyT, Mathf.Clamp01(msg.Volume));
+            TraverseHack.ApplyingFromNetwork = true;
+            try
+            {
+                AudioController.Play(msg.SoundId, pos, null, Mathf.Clamp01(msg.Volume));
+            }
+            finally { TraverseHack.ApplyingFromNetwork = false; }
         }
 
         private void HandleGasTrailSpawn(GasTrailSpawnMessage msg)
@@ -1752,17 +1848,15 @@ namespace DarkwoodMultiplayer.Networking
             if (itemDef == null) { ModRuntime.Log?.LogInfo("[WeaponFire] handle: item not found: " + msg.ItemType); return; }
             if (!itemDef.isFirearm) { ModRuntime.Log?.LogInfo("[WeaponFire] handle: not a firearm: " + msg.ItemType); return; }
 
-            ModRuntime.Log?.LogInfo("[WeaponFire] handle: spawning muzzle for " + msg.ItemType + " count=" + msg.ProjectileCount);
-
             Transform proxyT = _remoteProxy.transform;
 
-            // Muzzle position using the proxy's transform and item's muzzleOffset
             Vector3 muzzlePos = proxyT.position
                 + proxyT.up * itemDef.muzzleOffset.y
                 + proxyT.right * itemDef.muzzleOffset.x;
             Quaternion muzzleRot = Quaternion.Euler(90f, msg.AimY, 0f);
 
-            // Custom muzzle prefab (e.g. smoke puff)
+            ModRuntime.Log?.LogInfo("[WeaponFire] handle: spawning muzzle for " + msg.ItemType + " count=" + msg.ProjectileCount + " aimY=" + msg.AimY);
+
             if (itemDef.muzzlePrefab != null)
             {
                 string name = itemDef.muzzlePrefab.name;
@@ -1770,7 +1864,6 @@ namespace DarkwoodMultiplayer.Networking
                     Core.AddPooledPrefab("FX", name, muzzlePos, muzzleRot);
             }
 
-            // Custom muzzle particles
             if (itemDef.muzzleParticles != null)
             {
                 string name = itemDef.muzzleParticles.name;
@@ -1778,39 +1871,49 @@ namespace DarkwoodMultiplayer.Networking
                     Core.AddPooledPrefab("FX", name, muzzlePos, muzzleRot);
             }
 
-            // Default pistol flash
             if (!itemDef.noMuzzleFlash)
             {
                 Core.AddPrefab("FX/Muzzle/PistolFlash", proxyT.position + proxyT.up, muzzleRot, null, worldSpace: true);
             }
 
-            // Hitscan FX is forwarded from the firing peer via HitscanImpactForwardPatch
-            // (bullet_hit_1 wall impacts) and HitscanBloodPatch (blood splats).
-            // The firing peer's game computes exact hit positions — we just present them.
-
-            // Friendly fire detection: raycast from proxy, check if host player is hit
-            if (msg.ProjectileCount > 0)
+            // Friendly fire (client → host) — cone check from fire position
+            if (msg.ProjectileCount > 0 && itemDef.item == null)
             {
                 Player hostPlayer = Player.Instance;
                 if (hostPlayer != null)
                 {
-                    int hitscanMask = 18909185;
-                    for (int i = 0; i < msg.ProjectileCount; i++)
-                    {
-                        float spread = UnityEngine.Random.Range(-1f, 1f);
-                        Vector3 dir = Quaternion.Euler(0f, msg.AimY + spread, 0f) * proxyT.up;
+                    Vector3 firePos = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
+                    Quaternion yawRot = Quaternion.Euler(0f, msg.AimY, 0f);
+                    Vector3 aimDir = yawRot * Vector3.forward;
+                    Vector3 rayOrigin = firePos + aimDir;
+                    Vector3 toHost = (hostPlayer.transform.position - rayOrigin).normalized;
+                    float angle = Vector3.Angle(aimDir, toHost);
 
-                        if (Physics.Raycast(proxyT.position + proxyT.up, dir, out RaycastHit hit, 1000f, hitscanMask)
-                            && hit.collider != null)
+                    if (angle < 15f)
+                    {
+                        float dist = Vector3.Distance(rayOrigin, hostPlayer.transform.position) + 0.5f;
+                        int wallMask = 18909185 & ~(1 << 11) & ~(1 << 21);
+                        bool blocked = Physics.Raycast(rayOrigin, toHost, out RaycastHit wallHit, dist, wallMask);
+
+                        if (!blocked)
                         {
-                            Player hitPlayer = hit.collider.GetComponentInParent<Player>();
-                            if (hitPlayer != null && hitPlayer == hostPlayer)
+                            float dmg = itemDef.damage;
+                            hostPlayer.getHit(dmg, proxyT, false, true, true);
+
+                            // Find actual hit point on host player
+                            Vector3 hitPoint = hostPlayer.transform.position;
+                            if (Physics.Raycast(rayOrigin, toHost, out RaycastHit playerHit, dist, 18909185))
+                                hitPoint = playerHit.point;
+
+                            string bloodPrefab = hostPlayer.inWater ? "FX/Bloodsplats/Shotsplat" : "FX/Bloodsplats/Shotsplat_stay";
+                            float rotY = hostPlayer.transform.eulerAngles.y + UnityEngine.Random.Range(-40f, 40f);
+                            Send(NetMessageType.BulletImpact, w => new BulletImpactMessage
                             {
-                                float dmg = itemDef.damage;
-                                hostPlayer.getHit(dmg, proxyT, false, true, true);
-                                ModRuntime.Log?.LogInfo("[WeaponFire] friendly fire: host hit, dmg=" + dmg);
-                                break;
-                            }
+                                PrefabName = bloodPrefab,
+                                PoolName = "",
+                                PosX = hitPoint.x, PosY = hitPoint.y, PosZ = hitPoint.z,
+                                RotX = 90f, RotY = rotY, RotZ = 0f
+                            }.Serialize(w), DeliveryMethod.ReliableOrdered);
                         }
                     }
                 }

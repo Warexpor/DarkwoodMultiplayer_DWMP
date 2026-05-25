@@ -123,15 +123,16 @@ namespace DarkwoodMultiplayer.Players
             rb.interpolation = RigidbodyInterpolation.Interpolate;
 
             int enabledCount = 0;
-            int triggerCount = 0;
+            int wasTrigger = 0;
             foreach (Collider col in clone.GetComponentsInChildren<Collider>(true))
             {
-                col.enabled = true;
                 if (col.isTrigger)
-                    triggerCount++;
+                    wasTrigger++;
+                col.enabled = true;
+                col.isTrigger = false;
                 enabledCount++;
             }
-            log?.LogInfo($"RemoteProxy: enabled {enabledCount} colliders ({triggerCount} triggers) — non-kinematic mass=2.5 drag=0");
+            log?.LogInfo($"RemoteProxy: enabled {enabledCount} colliders ({wasTrigger} were triggers, set to non-trigger)");
         }
 
         /// <summary>

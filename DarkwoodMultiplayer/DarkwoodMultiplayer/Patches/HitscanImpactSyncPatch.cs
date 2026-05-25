@@ -64,6 +64,15 @@ namespace DarkwoodMultiplayer.Patches
                         }.Serialize(w);
                     }, DeliveryMethod.ReliableOrdered);
 
+                    float yRot = player.transform.eulerAngles.y;
+                    TraverseHack.ApplyingFromNetwork = true;
+                    try
+                    {
+                        Core.AddPrefab("FX/Bloodsplats/Shotsplat", hitPoint,
+                            Quaternion.Euler(90f, yRot + Random.Range(-20f, 20f), 0f), null);
+                    }
+                    finally { TraverseHack.ApplyingFromNetwork = false; }
+
                     ModRuntime.Log?.LogInfo("[HitscanFX] client hit proxy, dmg=" + dmg);
                 }
                 return;

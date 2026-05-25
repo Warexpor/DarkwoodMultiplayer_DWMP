@@ -46,9 +46,12 @@ namespace DarkwoodMultiplayer.Patches
             if (!prefab.StartsWith("FX/Bloodsplats/")) return;
 
             Player player = Player.Instance;
-            if (player == null) return;
-            if (InvItemClass.isNull(player.currentItem) || !player.currentItem.baseClass.isFirearm) return;
-            if (player.currentItem.baseClass.item != null) return;
+            if (player == null) { ModRuntime.Log?.LogInfo("[BloodPatch] no player"); return; }
+            if (InvItemClass.isNull(player.currentItem)) { ModRuntime.Log?.LogInfo("[BloodPatch] no currentItem"); return; }
+            if (!player.currentItem.baseClass.isFirearm) { ModRuntime.Log?.LogInfo("[BloodPatch] not firearm"); return; }
+            if (player.currentItem.baseClass.item != null) { ModRuntime.Log?.LogInfo("[BloodPatch] projectile weapon, skip"); return; }
+
+            ModRuntime.Log?.LogInfo("[BloodPatch] forwarding " + prefab + " pos=" + position);
 
             net.SendBulletImpact(new BulletImpactMessage
             {

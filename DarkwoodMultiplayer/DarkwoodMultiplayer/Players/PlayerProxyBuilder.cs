@@ -210,6 +210,11 @@ namespace DarkwoodMultiplayer.Players
                 Rigidbody2D rb2d = clone.GetComponent<Rigidbody2D>();
                 if (rb2d != null)
                     UnityEngine.Object.DestroyImmediate(rb2d);
+
+                // Destroy AudioListener so all 2D sounds (Play(string,float)) use
+                // the local player's listener, not the proxy's cloned listener.
+                foreach (AudioListener al in clone.GetComponentsInChildren<AudioListener>(true))
+                    UnityEngine.Object.DestroyImmediate(al);
             }
         }
 
