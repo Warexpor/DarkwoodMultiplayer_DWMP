@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
+using DarkwoodMultiplayer.Audio;
 using DarkwoodMultiplayer.Players;
 using DarkwoodMultiplayer.Sync;
 using HarmonyLib;
@@ -1367,6 +1368,8 @@ namespace DarkwoodMultiplayer.Networking
 
             Character c = CharacterTracker.FindByStableId(msg.HostId);
             if (c == null || c.sounds == null) return;
+
+            if (!LocalAudioService.IsNearLocalPlayer(c)) return;
 
             switch (msg.SoundType)
             {

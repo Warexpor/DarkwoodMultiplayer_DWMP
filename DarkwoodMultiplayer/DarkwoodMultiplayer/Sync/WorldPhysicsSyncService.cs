@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using DarkwoodMultiplayer.Audio;
 using DarkwoodMultiplayer.Networking;
 using DarkwoodMultiplayer.Players;
 using HarmonyLib;
@@ -745,8 +746,8 @@ namespace DarkwoodMultiplayer.Sync
             {
                 Trigger trig = go.GetComponent<Trigger>();
 
-                // Play explosion sound
-                if (trig != null && !string.IsNullOrEmpty(trig.activateSound))
+                // Play explosion sound (only if near the local player)
+                if (trig != null && !string.IsNullOrEmpty(trig.activateSound) && LocalAudioService.IsNearLocalPlayer(go.transform))
                     AudioController.Play(trig.activateSound, go.transform);
 
                 // Spawn explosion visual prefab

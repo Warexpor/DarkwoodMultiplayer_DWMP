@@ -128,9 +128,11 @@
         <Compile Include="Patches\BarricadeSyncPatches.cs"/>
         <Compile Include="Patches\JournalSyncPatches.cs"/>
         <Compile Include="Patches\SaveSyncPatches.cs"/>
+        <Compile Include="Audio\LocalAudioService.cs"/>
         <Compile Include="Properties\AssemblyInfo.cs"/>
         <Compile Include="Patches\ClientWorldPatches.cs"/>
         <Compile Include="Patches\NightSpawnProxyPatch.cs"/>
+        <Compile Include="Patches\AudioSuppressionPatch.cs"/>
         <Compile Include="Patches\EntitySoundSyncPatches.cs"/>
     </ItemGroup>
     <ItemGroup>
