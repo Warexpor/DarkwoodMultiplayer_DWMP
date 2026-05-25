@@ -48,7 +48,29 @@ namespace DarkwoodMultiplayer.Networking
         /// <summary>Host broadcasts current game time to the client.</summary>
         TimeSync = 21,
         /// <summary>Host broadcasts an entity sound event to the client.</summary>
-        EntitySound = 22
+        EntitySound = 22,
+        /// <summary>Client→Host: a world object was harvested/destroyed by clicking (e.g. mushroom).</summary>
+        WorldObjectRemoved = 23,
+        /// <summary>Either peer: player's active light (flashlight/torch/lantern) toggled.</summary>
+        PlayerLightState = 24,
+        /// <summary>Client→Host: player threw a throwable item (molotov, etc.).</summary>
+        ThrowableSpawn = 25,
+        /// <summary>Client→Host: a world object exploded (barrel, gas tank, etc.).</summary>
+        ExplosionTrigger = 26,
+        /// <summary>Either peer: play an audio clip at the proxy position.</summary>
+        PlayerAudio = 27,
+        /// <summary>Either peer: a gasoline trail was spawned at a world position.</summary>
+        GasTrailSpawn = 28,
+        /// <summary>Either peer: gasoline ignited at a world position (non-explosion ignition).</summary>
+        GasIgnite = 29,
+        /// <summary>Either peer: player's torso or legs animation clip changed (immediate event-based sync).</summary>
+        PlayerAnimation = 30,
+        /// <summary>Either peer: player switched animation library (item equip changes weapon sprites).</summary>
+        PlayerAnimLibrary = 31,
+        /// <summary>Host→Client: bullet impact FX (blood, wall hit, muzzle flash) at a world position.</summary>
+        BulletImpact = 32,
+        /// <summary>Either peer: player fired a weapon (sync muzzle flash, projectile visuals).</summary>
+        PlayerFiredWeapon = 33
     }
 
     /// <summary>
@@ -582,6 +604,34 @@ namespace DarkwoodMultiplayer.Networking
     }
 
     /// <summary>
+    /// Client→Host: a world object was harvested/clicked-destroyed (mushroom, exp item, etc).
+    /// The host finds the matching object and destroys it.
+    /// </summary>
+    public struct WorldObjectRemovedMessage
+    {
+        /// <summary>Rounded world position X (lookup key on receiver).</summary>
+        public float PosX;
+        /// <summary>Rounded world position Y.</summary>
+        public float PosY;
+        /// <summary>Rounded world position Z.</summary>
+        public float PosZ;
+        /// <summary>Name of the GameObject (fallback lookup).</summary>
+        public string ObjectName;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(PosX); w.Put(PosY); w.Put(PosZ);
+            w.Put(ObjectName ?? "");
+        }
+
+        public static WorldObjectRemovedMessage Deserialize(NetReader r) => new WorldObjectRemovedMessage
+        {
+            PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat(),
+            ObjectName = r.GetString()
+        };
+    }
+
+    /// <summary>
     /// Describes an inventory operation on a container (take, place, or remove).
     /// </summary>
     public enum ContainerAction : byte
@@ -935,6 +985,273 @@ namespace DarkwoodMultiplayer.Networking
         {
             CurrentTime = r.GetInt(),
             Day = r.GetInt()
+        };
+    }
+
+    /// <summary>
+    /// Either peer: player's active light (flashlight/torch/lantern) toggled.
+    /// The receiver looks up the item by ItemType in ItemsDatabase to spawn
+    /// the correct light/particle emitter prefabs on the proxy.
+    /// </summary>
+    public struct PlayerLightStateMessage
+    {
+        public bool LightOn;
+
+        /// <summary>Current item type (used to look up emitter prefabs on receiver).</summary>
+        public string ItemType;
+
+        /// <summary>Flashlight Light2D.LightRadius (0 = unchanged).</summary>
+        public float LightRadius;
+        public float LightColorR, LightColorG, LightColorB;
+        /// <summary>Flashlight Light2D.LightIntensity (0 = unchanged).</summary>
+        public float LightIntensity;
+
+        /// <summary>Non-empty when the held item has a lightEmitter (torch/lantern).</summary>
+        public bool HasLightEmitter;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(LightOn);
+            w.Put(ItemType ?? "");
+            w.Put(LightRadius);
+            w.Put(LightColorR); w.Put(LightColorG); w.Put(LightColorB);
+            w.Put(LightIntensity);
+            w.Put(HasLightEmitter);
+        }
+
+        public static PlayerLightStateMessage Deserialize(NetReader r) => new PlayerLightStateMessage
+        {
+            LightOn = r.GetBool(),
+            ItemType = r.GetString(),
+            LightRadius = r.GetFloat(),
+            LightColorR = r.GetFloat(), LightColorG = r.GetFloat(), LightColorB = r.GetFloat(),
+            LightIntensity = r.GetFloat(),
+            HasLightEmitter = r.GetBool()
+        };
+    }
+
+    /// <summary>
+    /// Client→Host: player threw a throwable item.
+    /// Host spawns the thrown item at the proxy position with matching trajectory.
+    /// </summary>
+    public struct ThrowableSpawnMessage
+    {
+        public string ItemType;
+        public float PosX, PosY, PosZ;
+        public float AimY;
+        public float Distance;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(ItemType ?? "");
+            w.Put(PosX); w.Put(PosY); w.Put(PosZ);
+            w.Put(AimY);
+            w.Put(Distance);
+        }
+
+        public static ThrowableSpawnMessage Deserialize(NetReader r) => new ThrowableSpawnMessage
+        {
+            ItemType = r.GetString(),
+            PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat(),
+            AimY = r.GetFloat(),
+            Distance = r.GetFloat()
+        };
+    }
+
+    /// <summary>
+    /// Either peer: an explosion happened at a world position.
+    /// Host runs the authoritative explosion; client spawns the visual effect.
+    /// </summary>
+    public struct ExplosionTriggerMessage
+    {
+        public float PosX, PosY, PosZ;
+        public string ObjectName;
+        /// <summary>Whether this explosion should propagate fire (ignite gasoline, etc.).</summary>
+        public bool Flaming;
+        /// <summary>Name of the explosionPrefab asset (for client-side visual spawn).</summary>
+        public string PrefabName;
+        /// <summary>Name of the explodeSound audio clip (for client-side audio).</summary>
+        public string SoundId;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(PosX); w.Put(PosY); w.Put(PosZ);
+            w.Put(ObjectName ?? "");
+            w.Put(Flaming);
+            w.Put(PrefabName ?? "");
+            w.Put(SoundId ?? "");
+        }
+
+        public static ExplosionTriggerMessage Deserialize(NetReader r) => new ExplosionTriggerMessage
+        {
+            PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat(),
+            ObjectName = r.GetString(),
+            Flaming = r.GetBool(),
+            PrefabName = r.GetString(),
+            SoundId = r.GetString()
+        };
+    }
+
+    /// <summary>
+    /// Either peer: play a named audio clip at the remote proxy position.
+    /// </summary>
+    public struct PlayerAudioMessage
+    {
+        public string SoundId;
+        public float Volume;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(SoundId ?? "");
+            w.Put(Volume);
+        }
+
+        public static PlayerAudioMessage Deserialize(NetReader r) => new PlayerAudioMessage
+        {
+            SoundId = r.GetString(),
+            Volume = r.GetFloat()
+        };
+    }
+
+    /// <summary>
+    /// Either peer: a gasoline trail was spawned at a world position.
+    /// The receiver spawns the trail at the same absolute position.
+    /// </summary>
+    public struct GasTrailSpawnMessage
+    {
+        public float PosX, PosY, PosZ;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(PosX); w.Put(PosY); w.Put(PosZ);
+        }
+
+        public static GasTrailSpawnMessage Deserialize(NetReader r) => new GasTrailSpawnMessage
+        {
+            PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat()
+        };
+    }
+
+    /// <summary>
+    /// Either peer: gasoline ignited at a world position (match/torch lighting puddle).
+    /// </summary>
+    public struct GasIgniteMessage
+    {
+        public float PosX, PosY, PosZ;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(PosX); w.Put(PosY); w.Put(PosZ);
+        }
+
+        public static GasIgniteMessage Deserialize(NetReader r) => new GasIgniteMessage
+        {
+            PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat()
+        };
+    }
+
+    /// <summary>
+    /// Either peer: the local player's torso or legs animation clip changed.
+    /// Sent immediately on clip transition for precise animation sync.
+    /// </summary>
+    public struct PlayerAnimationMessage
+    {
+        /// <summary>Name of the torso animation clip playing (empty if not set by event).</summary>
+        public string TorsoClip;
+        /// <summary>Name of the legs animation clip playing (empty if not set by event).</summary>
+        public string LegsClip;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(TorsoClip ?? "");
+            w.Put(LegsClip ?? "");
+        }
+
+        public static PlayerAnimationMessage Deserialize(NetReader r) => new PlayerAnimationMessage
+        {
+            TorsoClip = r.GetString(),
+            LegsClip = r.GetString()
+        };
+    }
+
+    /// <summary>
+    /// Either peer: the local player switched animation library (item equip).
+    /// The receiver changes the proxy's torso animator library to match.
+    /// </summary>
+    public struct PlayerAnimLibraryMessage
+    {
+        /// <summary>Animation library name (e.g. "PlayerPistolAnims", "PlayerMeleeAnims", "PlayerNoneAnims").</summary>
+        public string LibraryName;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(LibraryName ?? "");
+        }
+
+        public static PlayerAnimLibraryMessage Deserialize(NetReader r) => new PlayerAnimLibraryMessage
+        {
+            LibraryName = r.GetString()
+        };
+    }
+
+    /// <summary>
+    /// Host→Client: bullet impact visual FX (blood splatter, wall hit, muzzle flash).
+    /// The client spawns the same effect at the given world position.
+    /// </summary>
+    public struct BulletImpactMessage
+    {
+        /// <summary>FX prefab name: "bullet_hit_1", "Shotsplat1", "Shotsplat", "Shotsplat_stay", or "MuzzleFlash".</summary>
+        public string PrefabName;
+        public string PoolName;
+        public float PosX, PosY, PosZ;
+        public float RotX, RotY, RotZ;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(PrefabName ?? "");
+            w.Put(PoolName ?? "");
+            w.Put(PosX); w.Put(PosY); w.Put(PosZ);
+            w.Put(RotX); w.Put(RotY); w.Put(RotZ);
+        }
+
+        public static BulletImpactMessage Deserialize(NetReader r) => new BulletImpactMessage
+        {
+            PrefabName = r.GetString(),
+            PoolName = r.GetString(),
+            PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat(),
+            RotX = r.GetFloat(), RotY = r.GetFloat(), RotZ = r.GetFloat()
+        };
+    }
+
+    /// <summary>
+    /// Either peer: player fired a weapon. The receiving side spawns muzzle flash
+    /// and projectile visuals at the remote proxy position.
+    /// </summary>
+    public struct PlayerFiredWeaponMessage
+    {
+        /// <summary>The weapon item type (e.g. "pistol", "shotgun").</summary>
+        public string ItemType;
+        /// <summary>Player's Y-axis rotation (aim direction).</summary>
+        public float AimY;
+        /// <summary>World position of the player when firing.</summary>
+        public float PosX, PosY, PosZ;
+        /// <summary>Number of projectiles to spawn (weapon's projectileAmount).</summary>
+        public int ProjectileCount;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(ItemType ?? "");
+            w.Put(AimY);
+            w.Put(PosX); w.Put(PosY); w.Put(PosZ);
+            w.Put(ProjectileCount);
+        }
+
+        public static PlayerFiredWeaponMessage Deserialize(NetReader r) => new PlayerFiredWeaponMessage
+        {
+            ItemType = r.GetString(),
+            AimY = r.GetFloat(),
+            PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat(),
+            ProjectileCount = r.GetInt()
         };
     }
 }

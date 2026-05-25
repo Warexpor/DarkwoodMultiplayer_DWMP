@@ -204,6 +204,52 @@ namespace DarkwoodMultiplayer.Players
             }
         }
 
+        // Safety-net: detect Bullet component collisions in case FastProjectile
+        // raycast misses the proxy (short-distance edge cases).
+        private void OnCollisionEnter(Collision collision)
+        {
+            if (collision.rigidbody == null) return;
+            var bullet = collision.gameObject.GetComponent<Bullet>();
+            if (bullet == null) return;
+
+            var net = ModRuntime.Network as Networking.LanNetworkManager;
+            if (net == null || net.Role == Networking.NetworkRole.Offline) return;
+            if (bullet.objectThatSpawnedMe != null) return; // Skip enemy bullets
+
+            int dmg = Mathf.Max(1, bullet.damage);
+            Vector3 pos = transform.position;
+
+            if (net.Role == Networking.NetworkRole.Host)
+            {
+                net.Send(Networking.NetMessageType.DamagePlayer, w =>
+                {
+                    new Networking.DamagePlayerMessage
+                    {
+                        Damage = dmg,
+                        AttackerPosX = pos.x, AttackerPosY = pos.y, AttackerPosZ = pos.z,
+                        ShowRedScreen = true
+                    }.Serialize(w);
+                }, LiteNetLib.DeliveryMethod.ReliableOrdered);
+            }
+            else
+            {
+                net.Send(Networking.NetMessageType.FriendlyFire, w =>
+                {
+                    new Networking.FriendlyFireMessage
+                    {
+                        Damage = dmg,
+                        AttackerPosX = pos.x, AttackerPosY = pos.y, AttackerPosZ = pos.z
+                    }.Serialize(w);
+                }, LiteNetLib.DeliveryMethod.ReliableOrdered);
+            }
+
+            ModRuntime.Log?.LogInfo("[ProxyCollisionEnter] bullet hit proxy, relayed " + dmg + " damage");
+
+            // Physically destroy the bullet so it doesn't persist
+            if (collision.gameObject != null)
+                UnityEngine.Object.Destroy(collision.gameObject);
+        }
+
         // Throttled log counter to avoid spamming the log file
         private static int _pushCollideCount;
 

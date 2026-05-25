@@ -15,6 +15,12 @@ namespace DarkwoodMultiplayer.Sync
     /// </summary>
     public static class WorldPhysicsSyncService
     {
+        /// <summary>
+        /// Set true around Explodes.onActivate() calls initiated by a network message
+        /// to prevent ExplosionTriggerPatch from re-broadcasting and creating a loop.
+        /// </summary>
+        internal static bool _suppressBroadcast;
+
         private static readonly List<WorldObjectState> _objects = new List<WorldObjectState>();
         private static readonly List<DoorState> _doors = new List<DoorState>();
         private static readonly List<TrapState> _traps = new List<TrapState>();
@@ -522,6 +528,7 @@ namespace DarkwoodMultiplayer.Sync
             {
                 try
                 {
+                    TraverseHack.ApplyingFromNetwork = true;
                     foreach (TrapState ts in state.Traps)
                     {
                         Vector3 tPos = new Vector3(ts.PosX, ts.PosY, ts.PosZ);
@@ -540,6 +547,10 @@ namespace DarkwoodMultiplayer.Sync
                 catch (Exception ex)
                 {
                     ModRuntime.Log?.LogError("[TrapApply] Exception: " + ex);
+                }
+                finally
+                {
+                    TraverseHack.ApplyingFromNetwork = false;
                 }
                 if (trapApplied > 0 || trapSkipped > 0)
                     ModRuntime.Log?.LogInfo("[TrapRecv] applied=" + trapApplied + " skipped=" + trapSkipped + " from " + fromPeer);
@@ -566,6 +577,51 @@ namespace DarkwoodMultiplayer.Sync
         {
             if (go == null) return;
             _objectInterp.Remove(go.GetInstanceID());
+        }
+
+        /// <summary>
+        /// Finds a world object (mushroom, exp item, etc.) by position and destroys it.
+        /// Used when the remote peer reports that they harvested/picked up the object.
+        /// First checks if the object name likely matches, then destroys by calling Core.RemovePooledPrefab
+        /// or Object.Destroy depending on how the object was spawned.
+        /// </summary>
+        public static void DestroyObjectByPos(Vector3 pos, string objectName)
+        {
+            Collider[] nearby = Physics.OverlapSphere(pos, 1.5f);
+            for (int i = 0; i < nearby.Length; i++)
+            {
+                if (nearby[i] == null) continue;
+                GameObject root = nearby[i].gameObject;
+                Rigidbody rb = nearby[i].attachedRigidbody;
+                if (rb != null) root = rb.gameObject;
+                if (root == null) continue;
+
+                string rootName = root.name.ToLowerInvariant();
+                if (rootName.Contains("mushroom") || rootName.Contains("exp") || rootName.Contains("bio")
+                    || rootName.Contains("trap") || rootName.Contains("bear") || rootName.Contains("snap") || rootName.Contains("animal"))
+                {
+                    RemoveObjectFromInterpolation(root);
+                    Core.RemovePooledPrefab(root.transform);
+                    try { TraverseHack.ApplyingFromNetwork = true; UnityEngine.Object.Destroy(root); }
+                    finally { TraverseHack.ApplyingFromNetwork = false; }
+                    ModRuntime.Log?.LogInfo("[ObjectDestroy] destroyed \"" + root.name + "\" at " + pos);
+                    return;
+                }
+            }
+
+            // Fallback: search by name
+            if (!string.IsNullOrEmpty(objectName))
+            {
+                GameObject named = GameObject.Find(objectName);
+                if (named != null)
+                {
+                    RemoveObjectFromInterpolation(named);
+                    Core.RemovePooledPrefab(named.transform);
+                    try { TraverseHack.ApplyingFromNetwork = true; UnityEngine.Object.Destroy(named); }
+                    finally { TraverseHack.ApplyingFromNetwork = false; }
+                    ModRuntime.Log?.LogInfo("[ObjectDestroy] destroyed by name \"" + named.name + "\" at " + pos);
+                }
+            }
         }
 
         /// <summary>
@@ -1101,6 +1157,258 @@ namespace DarkwoodMultiplayer.Sync
             DoorTracker.Clear();
             GeneratorTracker.Clear();
             CharacterTracker.Clear();
+        }
+
+        public static void SpawnThrownItem(ThrowableSpawnMessage msg, Transform proxyT)
+        {
+            if (Singleton<ItemsDatabase>.Instance == null || !Singleton<ItemsDatabase>.Instance.hasItem(msg.ItemType))
+            {
+                ModRuntime.Log?.LogWarning("[ThrowableSpawn] unknown item type: " + msg.ItemType);
+                return;
+            }
+
+            InvItem itemDef = Singleton<ItemsDatabase>.Instance.getItem(msg.ItemType, instantiate: false);
+            if (itemDef == null || itemDef.item == null)
+            {
+                ModRuntime.Log?.LogWarning("[ThrowableSpawn] no prefab for " + msg.ItemType);
+                return;
+            }
+
+            GameObject prefab = itemDef.item as GameObject;
+            if (prefab == null) return;
+
+            Vector3 spawnPos = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
+            GameObject go = Core.AddPrefab(prefab, spawnPos, Quaternion.Euler(90f, msg.AimY, 0f), null);
+            if (go == null)
+                go = UnityEngine.Object.Instantiate(prefab, spawnPos, Quaternion.Euler(90f, msg.AimY, 0f));
+
+            if (go == null)
+            {
+                ModRuntime.Log?.LogWarning("[ThrowableSpawn] failed to spawn " + msg.ItemType);
+                return;
+            }
+
+            Rigidbody rb = go.GetComponent<Rigidbody>();
+            if (rb != null)
+            {
+                rb.isKinematic = false;
+                float distance = Mathf.Clamp(msg.Distance, 10f, 370f);
+                Vector3 dir = Quaternion.Euler(0f, msg.AimY, 0f) * Vector3.up;
+                float speed = 2.5f;
+                ThrownItem thrownItem = go.GetComponent<ThrownItem>();
+                float initialV = thrownItem != null ? thrownItem.initialVelocity : 0f;
+                if (initialV == 0f)
+                    rb.velocity = dir * distance * speed;
+                else
+                    rb.velocity = dir * initialV;
+            }
+
+            ThrownItem ti = go.GetComponent<ThrownItem>();
+            if (ti != null)
+            {
+                ti.thrown = true;
+                ti.objectThatSpawnedMe = proxyT;
+                float dist = Mathf.Clamp(msg.Distance, 10f, 370f);
+                ti.landTarget = proxyT.position + Quaternion.Euler(0f, msg.AimY, 0f) * Vector3.up * dist;
+                ti.setFallSpeed(dist);
+            }
+
+            Explodes expl = go.GetComponent<Explodes>();
+            if (expl != null)
+                expl.objectThatSpawnedMe = proxyT;
+
+            // Diagnostic: log Light2D state on spawned throwable (e.g. flare)
+            Light2D spawnedLight = go.GetComponentInChildren<Light2D>(true);
+            if (spawnedLight != null)
+            {
+                ModRuntime.Log?.LogInfo("[ThrowableSpawn] Light2D on " + msg.ItemType
+                    + " radius=" + spawnedLight.LightRadius
+                    + " intensity=" + spawnedLight.LightIntensity
+                    + " enabled=" + spawnedLight.LightEnabled
+                    + " goActive=" + spawnedLight.gameObject.activeInHierarchy
+                    + " color=" + spawnedLight.LightColor);
+            }
+            else
+            {
+                ModRuntime.Log?.LogInfo("[ThrowableSpawn] NO Light2D found on " + msg.ItemType);
+            }
+
+            Core.addToSaveable(go, isDynamic: true);
+            ModRuntime.Log?.LogInfo("[ThrowableSpawn] spawned " + msg.ItemType + " at " + spawnPos + " aimY=" + msg.AimY + " dist=" + msg.Distance);
+        }
+
+        public static void TriggerExplosion(Vector3 pos, string objectName, bool flaming = false)
+        {
+            Collider[] nearby = Physics.OverlapSphere(pos, 1.5f);
+            Explodes target = null;
+            for (int i = 0; i < nearby.Length; i++)
+            {
+                if (nearby[i] == null) continue;
+                Explodes expl = nearby[i].GetComponentInParent<Explodes>();
+                if (expl != null)
+                {
+                    target = expl;
+                    break;
+                }
+            }
+
+            if (target == null && !string.IsNullOrEmpty(objectName))
+            {
+                GameObject named = GameObject.Find(objectName);
+                if (named != null)
+                    target = named.GetComponent<Explodes>();
+            }
+
+            if (target != null)
+            {
+                ModRuntime.Log?.LogInfo("[ExplosionTrigger] activating " + target.name + " at " + pos + " flaming=" + flaming);
+                _suppressBroadcast = true;
+                try
+                {
+                    if (flaming)
+                        target.onActivate(true);
+                    else
+                        target.onActivate();
+                }
+                finally { _suppressBroadcast = false; }
+                // Proxy damage handled by ExplosionFriendlyFirePatch.Postfix on Explodes.explode()
+            }
+            else
+            {
+                ModRuntime.Log?.LogWarning("[ExplosionTrigger] no Explodes found at " + pos + " name=" + objectName);
+            }
+        }
+
+        /// <summary>
+        /// Spawns the explosion visual effect (prefab + sound) on the client side.
+        /// Tries to find the Explodes component locally first; if not found, falls back
+        /// to spawning the prefab by name and playing the sound from the message fields.
+        /// </summary>
+        public static void SpawnExplosionVisual(Vector3 pos, string objectName, string prefabName, string soundId)
+        {
+            Explodes target = null;
+
+            // Try by object name first (works for static world objects like barrels)
+            if (!string.IsNullOrEmpty(objectName))
+            {
+                GameObject named = GameObject.Find(objectName);
+                if (named != null)
+                    target = named.GetComponent<Explodes>();
+            }
+
+            // Fallback: search by position
+            if (target == null)
+            {
+                Collider[] nearby = Physics.OverlapSphere(pos, 1.5f);
+                for (int i = 0; i < nearby.Length; i++)
+                {
+                    if (nearby[i] == null) continue;
+                    Explodes expl = nearby[i].GetComponentInParent<Explodes>();
+                    if (expl != null) { target = expl; break; }
+                }
+            }
+
+            if (target != null)
+            {
+                // Don't re-spawn if already activated on this side
+                try
+                {
+                    bool activated = (bool)Traverse.Create(target).Field("activated").GetValue();
+                    if (activated)
+                    {
+                        ModRuntime.Log?.LogInfo("[ExplosionVisual] " + target.name + " already activated, skipping");
+                        return;
+                    }
+                }
+                catch { }
+
+                // Spawn the local Explodes' own prefab (exact visual match)
+                try
+                {
+                    UnityEngine.Object prefab = (UnityEngine.Object)Traverse.Create(target).Field("explosionPrefab").GetValue();
+                    if (prefab != null)
+                    {
+                        Core.AddPrefab(prefab, pos, Quaternion.Euler(90f, 0f, 0f), null, worldSpace: true);
+                        ModRuntime.Log?.LogInfo("[ExplosionVisual] spawned local prefab " + prefab.name + " at " + pos);
+                    }
+                }
+                catch { }
+
+                // Play the local Explodes' own sound
+                try
+                {
+                    string sound = (string)Traverse.Create(target).Field("explodeSound").GetValue();
+                    if (!string.IsNullOrEmpty(sound))
+                    {
+                        AudioController.Play(sound, pos);
+                        ModRuntime.Log?.LogInfo("[ExplosionVisual] played local sound " + sound + " at " + pos);
+                    }
+                }
+                catch { }
+
+                return;
+            }
+
+            // Fallback: no local Explodes found — try spawning via Resources if prefabName is a path,
+            // then at minimum play the explosion sound for audio feedback.
+            ModRuntime.Log?.LogInfo("[ExplosionVisual] no local Explodes for \"" + objectName + "\", using message data");
+
+            if (!string.IsNullOrEmpty(soundId))
+            {
+                AudioController.Play(soundId, pos);
+                ModRuntime.Log?.LogInfo("[ExplosionVisual] played sound " + soundId + " at " + pos);
+            }
+        }
+
+        /// <summary>
+        /// Spawns a "Items/GasolineTrail" prefab at the given world position.
+        /// Used when the remote peer reports a gasoline pour.
+        /// </summary>
+        public static void SpawnGasTrail(Vector3 pos)
+        {
+            try { TraverseHack.ApplyingFromNetwork = true; }
+            catch { }
+            try
+            {
+                GameObject go = Core.AddPrefab("Items/GasolineTrail", pos, Quaternion.Euler(90f, 0f, 0f), Core.ItemContainer);
+                if (go != null)
+                {
+                    Core.addToSaveable(go, isDynamic: true);
+                    ModRuntime.Log?.LogInfo("[GasTrail] spawned at " + pos);
+                }
+                else
+                {
+                    ModRuntime.Log?.LogWarning("[GasTrail] Core.AddPrefab returned null at " + pos);
+                }
+            }
+            finally { TraverseHack.ApplyingFromNetwork = false; }
+        }
+
+        /// <summary>
+        /// Finds a Liquid component (gasoline puddle) near the given position and ignites it.
+        /// Used when the remote peer reports a gasoline ignition event.
+        /// </summary>
+        public static void IgniteGasAtPos(Vector3 pos)
+        {
+            try { TraverseHack.ApplyingFromNetwork = true; }
+            catch { }
+            try
+            {
+                Collider[] nearby = Physics.OverlapSphere(pos, 2f);
+                for (int i = 0; i < nearby.Length; i++)
+                {
+                    if (nearby[i] == null) continue;
+                    Liquid liquid = nearby[i].GetComponent<Liquid>();
+                    if (liquid != null && liquid.flammable && !liquid.burning)
+                    {
+                        liquid.startBurning();
+                        ModRuntime.Log?.LogInfo("[GasIgnite] ignited " + liquid.name + " at " + pos);
+                        return;
+                    }
+                }
+                ModRuntime.Log?.LogWarning("[GasIgnite] no flammable Liquid found at " + pos);
+            }
+            finally { TraverseHack.ApplyingFromNetwork = false; }
         }
     }
 

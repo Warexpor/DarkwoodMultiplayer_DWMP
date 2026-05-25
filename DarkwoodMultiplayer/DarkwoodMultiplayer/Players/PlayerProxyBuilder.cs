@@ -183,6 +183,19 @@ namespace DarkwoodMultiplayer.Players
                 SkillsMenu menu = clone.GetComponent<SkillsMenu>();
                 if (menu != null)
                     UnityEngine.Object.DestroyImmediate(menu);
+
+                // Destroy crosshair component + its line game objects to prevent duplicate
+                // crosshair lines on screen (Crosshair.Update checks Player.Instance.aiming,
+                // so the proxy would mirror the local player's aim state)
+                Crosshair crosshair = clone.GetComponentInChildren<Crosshair>(true);
+                if (crosshair != null)
+                {
+                    if (crosshair.line1 != null)
+                        UnityEngine.Object.DestroyImmediate(crosshair.line1.gameObject);
+                    if (crosshair.line2 != null)
+                        UnityEngine.Object.DestroyImmediate(crosshair.line2.gameObject);
+                    UnityEngine.Object.DestroyImmediate(crosshair);
+                }
             }
 
             if (kind == PlayerCloneKind.Remote)
@@ -202,6 +215,7 @@ namespace DarkwoodMultiplayer.Players
 
         /// <summary>
         /// Disables or destroys vision/lighting components on the clone.
+        /// Keeps the Flashlight child (Light2D) for networked light sync.
         /// </summary>
         public static void CleanupVision(GameObject root, PlayerCloneKind kind)
         {
@@ -210,20 +224,21 @@ namespace DarkwoodMultiplayer.Players
                 DestroyComponentByName(root, "PlayerVision");
                 DestroyComponentByName(root, "VisionCone");
                 DestroyComponentByName(root, "PlayerLight");
-                DestroyComponentByName(root, "Flashlight");
 
                 foreach (Transform child in root.GetComponentsInChildren<Transform>(true))
                 {
                     string name = child.name.ToLowerInvariant();
                     if (!name.Contains("vision")
-                        && !name.Contains("light")
-                        && !name.Contains("cone")
-                        && !name.Contains("flash")
-                        && !name.Contains("fov"))
+                        && !name.Contains("cone"))
                         continue;
 
                     child.gameObject.SetActive(false);
                 }
+
+                // Keep Flashlight child but ensure its Light2D component is disabled initially
+                Transform flashT = root.transform.Find("Flashlight");
+                if (flashT != null)
+                    flashT.gameObject.SetActive(false);
             }
 
             PlayerVisionController.From(root)?.SetAllVisionDisabled();

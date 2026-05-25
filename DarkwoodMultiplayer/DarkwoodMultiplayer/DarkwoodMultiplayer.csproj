@@ -133,7 +133,20 @@
         <Compile Include="Patches\ClientWorldPatches.cs"/>
         <Compile Include="Patches\NightSpawnProxyPatch.cs"/>
         <Compile Include="Patches\AudioSuppressionPatch.cs"/>
+        <Compile Include="Patches\SoundAreaVolumePatch.cs"/>
+        <Compile Include="Patches\WorldObjectHarvestPatch.cs"/>
         <Compile Include="Patches\EntitySoundSyncPatches.cs"/>
+        <Compile Include="Patches\PlayerActionSyncPatches.cs"/>
+        <Compile Include="Patches\PlayerSoundSyncPatches.cs"/>
+        <Compile Include="Patches\GasolineSyncPatches.cs"/>
+        <Compile Include="Patches\ExplosionFriendlyFirePatch.cs"/>
+        <Compile Include="Patches\PlayerAnimationTriggerPatch.cs"/>
+        <Compile Include="Patches\PlayerAnimLibraryPatch.cs"/>
+        <Compile Include="Patches\ProxyDamagePatch.cs"/>
+        <Compile Include="Patches\FastProjectileAwakePatch.cs"/>
+        <Compile Include="Patches\HitscanProxyPatch.cs"/>
+        <Compile Include="Patches\BulletFXSyncPatch.cs"/>
+        <Compile Include="Patches\WeaponFireSyncPatch.cs"/>
     </ItemGroup>
     <ItemGroup>
       <None Include="App.config" />

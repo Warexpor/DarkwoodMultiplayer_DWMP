@@ -472,6 +472,43 @@ namespace DarkwoodMultiplayer.Networking
                 case NetMessageType.EntitySound:
                     HandleEntitySound(EntitySoundMessage.Deserialize(new NetReader(payload)));
                     break;
+                case NetMessageType.WorldObjectRemoved:
+                    HandleWorldObjectRemoved(WorldObjectRemovedMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.PlayerLightState:
+                    HandlePlayerLightState(PlayerLightStateMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.ThrowableSpawn:
+                    HandleThrowableSpawn(ThrowableSpawnMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.ExplosionTrigger:
+                    HandleExplosionTrigger(ExplosionTriggerMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.PlayerAudio:
+                    HandlePlayerAudio(PlayerAudioMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.GasTrailSpawn:
+                    HandleGasTrailSpawn(GasTrailSpawnMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.GasIgnite:
+                    HandleGasIgnite(GasIgniteMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.PlayerAnimation:
+                    HandlePlayerAnimation(PlayerAnimationMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.PlayerAnimLibrary:
+                    HandlePlayerAnimLibrary(PlayerAnimLibraryMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.BulletImpact:
+                    TraverseHack.ApplyingFromNetwork = true;
+                    try { HandleBulletImpact(BulletImpactMessage.Deserialize(new NetReader(payload))); }
+                    finally { TraverseHack.ApplyingFromNetwork = false; }
+                    break;
+                case NetMessageType.PlayerFiredWeapon:
+                    TraverseHack.ApplyingFromNetwork = true;
+                    try { HandlePlayerFiredWeapon(PlayerFiredWeaponMessage.Deserialize(new NetReader(payload))); }
+                    finally { TraverseHack.ApplyingFromNetwork = false; }
+                    break;
                 }
             }
             finally
@@ -1082,6 +1119,90 @@ namespace DarkwoodMultiplayer.Networking
             Send(NetMessageType.LightState, w => ls.Serialize(w));
         }
 
+        public void SendWorldObjectRemoved(WorldObjectRemovedMessage msg)
+        {
+            if (!IsConnected) return;
+            if (IsApplyingRemoteState) return;
+            Send(NetMessageType.WorldObjectRemoved, w => msg.Serialize(w));
+        }
+
+        public void SendPlayerLightState(PlayerLightStateMessage msg)
+        {
+            if (!IsConnected) return;
+            if (IsApplyingRemoteState) return;
+            Send(NetMessageType.PlayerLightState, w => msg.Serialize(w));
+        }
+
+        public void SendThrowableSpawn(ThrowableSpawnMessage msg)
+        {
+            if (!IsConnected) return;
+            if (IsApplyingRemoteState) return;
+            Send(NetMessageType.ThrowableSpawn, w => msg.Serialize(w), LiteNetLib.DeliveryMethod.ReliableOrdered);
+        }
+
+        public void SendExplosionTrigger(ExplosionTriggerMessage msg)
+        {
+            if (!IsConnected) return;
+            if (IsApplyingRemoteState) return;
+            Send(NetMessageType.ExplosionTrigger, w => msg.Serialize(w));
+        }
+
+        public void SendPlayerAudio(PlayerAudioMessage msg)
+        {
+            if (!IsConnected) return;
+            if (IsApplyingRemoteState) return;
+            Send(NetMessageType.PlayerAudio, w => msg.Serialize(w));
+        }
+
+        public void SendGasTrailSpawn(GasTrailSpawnMessage msg)
+        {
+            if (!IsConnected) return;
+            if (IsApplyingRemoteState) return;
+            Send(NetMessageType.GasTrailSpawn, w => msg.Serialize(w));
+        }
+
+        public void SendGasIgnite(GasIgniteMessage msg)
+        {
+            if (!IsConnected) return;
+            if (IsApplyingRemoteState) return;
+            Send(NetMessageType.GasIgnite, w => msg.Serialize(w));
+        }
+
+        public void SendPlayerAnimation(PlayerAnimationMessage msg)
+        {
+            if (!IsConnected) return;
+            if (IsApplyingRemoteState) return;
+            Send(NetMessageType.PlayerAnimation, w => msg.Serialize(w));
+        }
+
+        public void SendPlayerAnimLibrary(PlayerAnimLibraryMessage msg)
+        {
+            if (!IsConnected) return;
+            if (IsApplyingRemoteState) return;
+            Send(NetMessageType.PlayerAnimLibrary, w => msg.Serialize(w));
+        }
+
+        public void SendBulletImpact(BulletImpactMessage msg)
+        {
+            if (!IsConnected) return;
+            if (IsApplyingRemoteState) return;
+            Send(NetMessageType.BulletImpact, w => msg.Serialize(w), DeliveryMethod.ReliableOrdered);
+        }
+
+        public void SendPlayerFiredWeapon(PlayerFiredWeaponMessage msg)
+        {
+            if (!IsConnected) return;
+            if (IsApplyingRemoteState) return;
+            Send(NetMessageType.PlayerFiredWeapon, w => msg.Serialize(w), DeliveryMethod.ReliableOrdered);
+        }
+
+        public void SendDamagePlayer(DamagePlayerMessage msg)
+        {
+            if (!IsConnected) return;
+            if (IsApplyingRemoteState) return;
+            Send(NetMessageType.DamagePlayer, w => msg.Serialize(w), DeliveryMethod.ReliableOrdered);
+        }
+
         /// <summary>Sends a save-sync trigger to the remote peer.</summary>
         public void SendSaveSync()
         {
@@ -1391,6 +1512,308 @@ namespace DarkwoodMultiplayer.Networking
                 case EntitySoundType.Escaping:
                     c.sounds.playEscapingLoop();
                     break;
+            }
+        }
+
+        private void HandleWorldObjectRemoved(WorldObjectRemovedMessage msg)
+        {
+            Vector3 pos = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
+            ModRuntime.Log?.LogInfo("[ObjectRemove] received destroy request for \"" + msg.ObjectName + "\" at " + pos);
+            Sync.WorldPhysicsSyncService.DestroyObjectByPos(pos, msg.ObjectName);
+        }
+
+        private void HandlePlayerLightState(PlayerLightStateMessage msg)
+        {
+            if (_remoteProxy == null) return;
+
+            // ---- Flashlight ----
+            Transform flashT = _remoteProxy.transform.Find("Flashlight");
+            if (flashT != null)
+            {
+                flashT.gameObject.SetActive(msg.LightOn);
+                if (msg.LightOn && msg.LightRadius > 0f)
+                {
+                    Light2D lt = flashT.GetComponent<Light2D>();
+                    if (lt != null)
+                    {
+                        lt.LightRadius = msg.LightRadius;
+                        lt.LightColor = new Color(msg.LightColorR, msg.LightColorG, msg.LightColorB, 0f);
+                        if (msg.LightIntensity > 0f)
+                            lt.LightIntensity = msg.LightIntensity;
+                    }
+                }
+            }
+
+            // ---- Torch / Lantern light emitter ----
+            Transform emitterRoot = _remoteProxy.transform.Find("ItemLightEmitter");
+            if (msg.HasLightEmitter && msg.LightOn)
+            {
+                // Look up the item in the database to get actual prefab references
+                if (emitterRoot == null && !string.IsNullOrEmpty(msg.ItemType))
+                {
+                    InvItem itemDef = Singleton<ItemsDatabase>.Instance?.getItem(msg.ItemType, instantiate: false);
+                    if (itemDef != null && itemDef.lightEmitter != null)
+                    {
+                        GameObject emitter = Core.AddPrefab(
+                            itemDef.lightEmitter,
+                            Vector3.zero,
+                            Quaternion.Euler(90f, 0f, 0f),
+                            _remoteProxy.gameObject);
+                        if (emitter != null)
+                        {
+                            emitter.name = "ItemLightEmitter";
+                            Collider ec = emitter.GetComponent<Collider>();
+                            if (ec != null)
+                                ec.enabled = false;
+                            ModRuntime.Log?.LogInfo("[LightSync] spawned emitter for " + msg.ItemType);
+                        }
+
+                        if (itemDef._particleEmitter != null)
+                        {
+                            Transform existingP = _remoteProxy.transform.Find("ItemParticleEmitter");
+                            if (existingP == null)
+                            {
+                                GameObject pe = Core.AddPrefab(
+                                    itemDef._particleEmitter,
+                                    Vector3.zero,
+                                    Quaternion.Euler(90f, 0f, 0f),
+                                    _remoteProxy.gameObject);
+                                if (pe != null)
+                                {
+                                    pe.name = "ItemParticleEmitter";
+                                    ModRuntime.Log?.LogInfo("[LightSync] spawned particle emitter for " + msg.ItemType);
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        ModRuntime.Log?.LogWarning("[LightSync] item not found in DB: " + msg.ItemType);
+                    }
+                }
+            }
+            else if (!msg.LightOn && emitterRoot != null)
+            {
+                RemoveLightEmitter(_remoteProxy.transform);
+            }
+        }
+
+        private static void RemoveLightEmitter(Transform proxyRoot)
+        {
+            Transform emitter = proxyRoot.Find("ItemLightEmitter");
+            if (emitter != null)
+            {
+                Light2D lt = emitter.GetComponent<Light2D>();
+                if (lt != null)
+                    lt.unlightGraphNodes();
+                Core.RemovePooledPrefab(emitter);
+            }
+            Transform particle = proxyRoot.Find("ItemParticleEmitter");
+            if (particle != null)
+                Core.RemovePooledPrefab(particle);
+        }
+
+        private void HandleThrowableSpawn(ThrowableSpawnMessage msg)
+        {
+            Transform sourceT = _remoteProxy != null ? _remoteProxy.transform : null;
+            Sync.WorldPhysicsSyncService.SpawnThrownItem(msg, sourceT);
+        }
+
+        private void HandleExplosionTrigger(ExplosionTriggerMessage msg)
+        {
+            Vector3 pos = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
+            if (_role == NetworkRole.Host)
+            {
+                Sync.WorldPhysicsSyncService.TriggerExplosion(pos, msg.ObjectName, msg.Flaming);
+            }
+            else
+            {
+                Sync.WorldPhysicsSyncService.SpawnExplosionVisual(pos, msg.ObjectName, msg.PrefabName, msg.SoundId);
+            }
+        }
+
+        private void HandlePlayerAudio(PlayerAudioMessage msg)
+        {
+            if (_remoteProxy == null) return;
+            if (string.IsNullOrEmpty(msg.SoundId)) return;
+
+            Transform proxyT = _remoteProxy.transform;
+
+            // Only play sounds within audible range to the local player
+            Player local = Player.Instance;
+            if (local != null && Vector3.Distance(local.transform.position, proxyT.position) > 500f) return;
+
+            AudioController.Play(msg.SoundId, proxyT, Mathf.Clamp01(msg.Volume));
+        }
+
+        private void HandleGasTrailSpawn(GasTrailSpawnMessage msg)
+        {
+            Vector3 pos = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
+            Sync.WorldPhysicsSyncService.SpawnGasTrail(pos);
+        }
+
+        private void HandleGasIgnite(GasIgniteMessage msg)
+        {
+            Vector3 pos = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
+            Sync.WorldPhysicsSyncService.IgniteGasAtPos(pos);
+        }
+
+        private void HandlePlayerAnimation(PlayerAnimationMessage msg)
+        {
+            if (_remoteProxy == null) return;
+            var animComp = _remoteProxy.GetComponent<SecondPlayerAnimController>();
+            if (animComp == null) return;
+
+            var prev = Sync.WorldPhysicsSyncService._suppressBroadcast;
+            Sync.WorldPhysicsSyncService._suppressBroadcast = true;
+            try
+            {
+                if (!string.IsNullOrEmpty(msg.TorsoClip))
+                {
+                    try
+                    {
+                        HarmonyLib.Traverse.Create(animComp).Method("PlayTorso", new object[] { msg.TorsoClip }).GetValue();
+                    }
+                    catch { }
+                }
+
+                if (!string.IsNullOrEmpty(msg.LegsClip))
+                {
+                    try
+                    {
+                        HarmonyLib.Traverse.Create(animComp).Method("PlayLegs", new object[] { msg.LegsClip }).GetValue();
+                    }
+                    catch { }
+                }
+            }
+            finally
+            {
+                Sync.WorldPhysicsSyncService._suppressBroadcast = prev;
+            }
+        }
+
+        private void HandlePlayerAnimLibrary(PlayerAnimLibraryMessage msg)
+        {
+            if (_remoteProxy == null) return;
+            if (string.IsNullOrEmpty(msg.LibraryName)) return;
+
+            var lib = Resources.Load(msg.LibraryName, typeof(tk2dSpriteAnimation)) as tk2dSpriteAnimation;
+            if (lib == null)
+            {
+                ModRuntime.Log?.LogWarning("[AnimLib] library not found: " + msg.LibraryName);
+                return;
+            }
+
+            tk2dSpriteAnimator anim = _remoteProxy.GetComponent<tk2dSpriteAnimator>();
+            if (anim == null) return;
+
+            var prev = Sync.WorldPhysicsSyncService._suppressBroadcast;
+            Sync.WorldPhysicsSyncService._suppressBroadcast = true;
+            try
+            {
+                HarmonyLib.Traverse.Create(anim).Property("Library").SetValue(lib);
+                ModRuntime.Log?.LogInfo("[AnimLib] applied library: " + msg.LibraryName);
+            }
+            catch (System.Exception ex)
+            {
+                ModRuntime.Log?.LogError("[AnimLib] failed to set library: " + ex.Message);
+            }
+            finally
+            {
+                Sync.WorldPhysicsSyncService._suppressBroadcast = prev;
+            }
+        }
+
+        private void HandleBulletImpact(BulletImpactMessage msg)
+        {
+            if (string.IsNullOrEmpty(msg.PrefabName)) return;
+
+            Vector3 pos = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
+            Quaternion rot = Quaternion.Euler(msg.RotX, msg.RotY, msg.RotZ);
+
+            ModRuntime.Log?.LogInfo($"[BulletFX] HandleBulletImpact: {msg.PrefabName} pool={msg.PoolName} pos={pos}");
+
+            if (string.IsNullOrEmpty(msg.PoolName))
+            {
+                Core.AddPrefab(msg.PrefabName, pos, rot, null);
+            }
+            else
+            {
+                Core.AddPooledPrefab(msg.PoolName, msg.PrefabName, pos, rot);
+            }
+        }
+
+        private void HandlePlayerFiredWeapon(PlayerFiredWeaponMessage msg)
+        {
+            if (_remoteProxy == null) { ModRuntime.Log?.LogInfo("[WeaponFire] handle: no proxy"); return; }
+
+            InvItem itemDef = null;
+            try { itemDef = Singleton<ItemsDatabase>.Instance?.getItem(msg.ItemType, instantiate: false); } catch { }
+            if (itemDef == null) { ModRuntime.Log?.LogInfo("[WeaponFire] handle: item not found: " + msg.ItemType); return; }
+            if (!itemDef.isFirearm) { ModRuntime.Log?.LogInfo("[WeaponFire] handle: not a firearm: " + msg.ItemType); return; }
+
+            ModRuntime.Log?.LogInfo("[WeaponFire] handle: spawning muzzle for " + msg.ItemType + " count=" + msg.ProjectileCount);
+
+            Transform proxyT = _remoteProxy.transform;
+
+            // Muzzle position using the proxy's transform and item's muzzleOffset
+            Vector3 muzzlePos = proxyT.position
+                + proxyT.up * itemDef.muzzleOffset.y
+                + proxyT.right * itemDef.muzzleOffset.x;
+            Quaternion muzzleRot = Quaternion.Euler(90f, msg.AimY, 0f);
+
+            // Custom muzzle prefab (e.g. smoke puff)
+            if (itemDef.muzzlePrefab != null)
+            {
+                string name = itemDef.muzzlePrefab.name;
+                if (!string.IsNullOrEmpty(name))
+                    Core.AddPooledPrefab("FX", name, muzzlePos, muzzleRot);
+            }
+
+            // Custom muzzle particles
+            if (itemDef.muzzleParticles != null)
+            {
+                string name = itemDef.muzzleParticles.name;
+                if (!string.IsNullOrEmpty(name))
+                    Core.AddPooledPrefab("FX", name, muzzlePos, muzzleRot);
+            }
+
+            // Default pistol flash
+            if (!itemDef.noMuzzleFlash)
+            {
+                Core.AddPrefab("FX/Muzzle/PistolFlash", proxyT.position + proxyT.up, muzzleRot, null, worldSpace: true);
+            }
+
+            // Hitscan FX is forwarded from the firing peer via HitscanImpactForwardPatch
+            // (bullet_hit_1 wall impacts) and HitscanBloodPatch (blood splats).
+            // The firing peer's game computes exact hit positions — we just present them.
+
+            // Friendly fire detection: raycast from proxy, check if host player is hit
+            if (msg.ProjectileCount > 0)
+            {
+                Player hostPlayer = Player.Instance;
+                if (hostPlayer != null)
+                {
+                    int hitscanMask = 18909185;
+                    for (int i = 0; i < msg.ProjectileCount; i++)
+                    {
+                        float spread = UnityEngine.Random.Range(-1f, 1f);
+                        Vector3 dir = Quaternion.Euler(0f, msg.AimY + spread, 0f) * proxyT.up;
+
+                        if (Physics.Raycast(proxyT.position + proxyT.up, dir, out RaycastHit hit, 1000f, hitscanMask)
+                            && hit.collider != null)
+                        {
+                            Player hitPlayer = hit.collider.GetComponentInParent<Player>();
+                            if (hitPlayer != null && hitPlayer == hostPlayer)
+                            {
+                                float dmg = itemDef.damage;
+                                hostPlayer.getHit(dmg, proxyT, false, true, true);
+                                ModRuntime.Log?.LogInfo("[WeaponFire] friendly fire: host hit, dmg=" + dmg);
+                                break;
+                            }
+                        }
+                    }
+                }
             }
         }
 

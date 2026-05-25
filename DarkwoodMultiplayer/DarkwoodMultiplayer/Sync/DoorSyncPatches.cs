@@ -63,13 +63,21 @@ namespace DarkwoodMultiplayer.Sync
         }
     }
 
-    /// <summary>Harmony patch: intercepts Trigger.OnAfterTrigger (traps) and broadcasts the triggered state.</summary>
-    [HarmonyPatch(typeof(Trigger), "OnAfterTrigger")]
-    public static class TrapTriggerPatch
+    /// <summary>
+    /// Harmony patch: intercepts Trigger.switchToTriggered() (traps) and broadcasts the triggered state.
+    /// This is more reliable than hooking OnAfterTrigger because switchToTriggered() is public
+    /// and is the common final path for all trap triggering.
+    /// </summary>
+    [HarmonyPatch(typeof(Trigger), "switchToTriggered")]
+    public static class TrapSwitchPatch
     {
-        private static void Postfix(Trigger __instance, Collider other, bool doConnectChain)
+        private static void Postfix(Trigger __instance)
         {
             if (ModRuntime.Network == null)
+                return;
+
+            // Prevent re-broadcasting when applying a remote snapshot
+            if (TraverseHack.ApplyingFromNetwork)
                 return;
 
             // Only sync objects whose name suggests they are a trap

@@ -29,7 +29,6 @@ namespace DarkwoodMultiplayer.Players
 
         // Fallback animation library used when the clone lacks certain torso clips
         private tk2dSpriteAnimation _noneAnimsLib;
-        private string _currentTorsoClip;
         private LocomotionState _state = LocomotionState.Idle;
         private bool _flipX;
         private short _networkLegFacingY;
@@ -234,11 +233,13 @@ namespace DarkwoodMultiplayer.Players
                 }
             }
 
-            if (clipName == _currentTorsoClip)
+            // Only skip if the animator is already actively playing this clip.
+            // Allows replay when a non-looping clip finishes and restarts
+            // (e.g. double barrel reload loop — same clip plays twice).
+            if (_torsoAnimator.Playing && _torsoAnimator.CurrentClip?.name == clipName)
                 return;
 
             _torsoAnimator.Play(clipName);
-            _currentTorsoClip = clipName;
         }
 
         private void PlayLegs(string clipName)
@@ -266,7 +267,6 @@ namespace DarkwoodMultiplayer.Players
             if (_torsoAnimator == null)
                 return;
             _torsoAnimator.Stop();
-            _currentTorsoClip = null;
         }
 
         private void SetFlipX(bool flip)
