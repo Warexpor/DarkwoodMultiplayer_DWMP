@@ -587,6 +587,10 @@ namespace DarkwoodMultiplayer.Sync
         /// </summary>
         public static void DestroyObjectByPos(Vector3 pos, string objectName)
         {
+            // AudioObject removal requests are ephemeral sound effects, not actual traps
+            if (!string.IsNullOrEmpty(objectName) && objectName.ToLowerInvariant().Contains("audioobject"))
+                return;
+
             Collider[] nearby = Physics.OverlapSphere(pos, 1.5f);
             for (int i = 0; i < nearby.Length; i++)
             {
@@ -609,8 +613,8 @@ namespace DarkwoodMultiplayer.Sync
                 }
             }
 
-            // Fallback: search by name
-            if (!string.IsNullOrEmpty(objectName))
+            // Fallback: search by name (skip AudioObject requests — they are ephemeral, not actual traps)
+            if (!string.IsNullOrEmpty(objectName) && !objectName.ToLowerInvariant().Contains("audioobject"))
             {
                 GameObject named = GameObject.Find(objectName);
                 if (named != null)
@@ -728,8 +732,9 @@ namespace DarkwoodMultiplayer.Sync
         }
 
         /// <summary>Finds a trap GameObject by position using collider overlap, Trigger component, and name-based fallback.</summary>
-        private static GameObject FindTrapByPos(Vector3 pos)
+        private static GameObject FindTrapByPos(Vector3 pos, string objectName = null)
         {
+            // Primary: collider-based search
             Collider[] nearby = Physics.OverlapSphere(pos, 1.5f);
             for (int i = 0; i < nearby.Length; i++)
             {
@@ -742,16 +747,21 @@ namespace DarkwoodMultiplayer.Sync
                     return root;
             }
 
-            // Fallback: search Trigger components by position
+            // Fallback: search Trigger components by position (Y-tolerant)
             Trigger[] triggers = UnityEngine.Object.FindObjectsOfType<Trigger>();
             Vector3 rounded = new Vector3((float)Math.Round(pos.x, 1), (float)Math.Round(pos.y, 1), (float)Math.Round(pos.z, 1));
             foreach (Trigger t in triggers)
             {
                 if (t == null) continue;
                 Vector3 tp = t.transform.position;
-                Vector3 tk = new Vector3((float)Math.Round(tp.x, 1), (float)Math.Round(tp.y, 1), (float)Math.Round(tp.z, 1));
-                if (tk == rounded)
-                    return t.gameObject;
+                float tx = (float)Math.Round(tp.x, 1);
+                float tz = (float)Math.Round(tp.z, 1);
+                if (tx == rounded.x && tz == rounded.z)
+                {
+                    float ty = (float)Math.Round(tp.y, 1);
+                    if (Mathf.Abs(ty - rounded.y) <= 5f)
+                        return t.gameObject;
+                }
             }
 
             // Last resort: wider search by name + position
@@ -765,8 +775,17 @@ namespace DarkwoodMultiplayer.Sync
                 if (root == null) continue;
                 Vector3 rp = root.transform.position;
                 Vector3 rk = new Vector3((float)Math.Round(rp.x, 1), (float)Math.Round(rp.y, 1), (float)Math.Round(rp.z, 1));
-                if (rk == rounded && (root.name.ToLowerInvariant().Contains("mushroom") || root.name.ToLowerInvariant().Contains("trap") || root.name.ToLowerInvariant().Contains("bear")))
+                if (Mathf.Abs(rk.x - rounded.x) <= 0.2f && Mathf.Abs(rk.z - rounded.z) <= 0.2f && Mathf.Abs(rk.y - rounded.y) <= 5f
+                    && (root.name.ToLowerInvariant().Contains("mushroom") || root.name.ToLowerInvariant().Contains("trap") || root.name.ToLowerInvariant().Contains("bear")))
                     return root;
+            }
+
+            // Final fallback: name-based if provided
+            if (!string.IsNullOrEmpty(objectName))
+            {
+                GameObject named = GameObject.Find(objectName);
+                if (named != null && HasTrapField(named))
+                    return named;
             }
 
             return null;
@@ -802,14 +821,22 @@ namespace DarkwoodMultiplayer.Sync
             {
                 Trigger trig = go.GetComponent<Trigger>();
 
-                // Play explosion sound (only if near the local player)
-                if (trig != null && !string.IsNullOrEmpty(trig.activateSound) && LocalAudioService.IsNearLocalPlayer(go.transform))
+                // Play activation sound
+                if (trig != null && !string.IsNullOrEmpty(trig.activateSound))
                     AudioController.Play(trig.activateSound, go.transform);
 
-                // Spawn explosion visual prefab
+                // Spawn explosion visual prefab (blood splatter, etc.) at ground level.
+                // Dropped items have Y=-10.4 (below terrain), so raycast to find ground.
                 if (trig != null && trig.prefabToSpawn != null)
                 {
                     Vector3 spawnPos = go.transform.position + new Vector3(0f, 1f, 0f);
+                    // Bump underground traps up to ground level
+                    if (spawnPos.y < 0f)
+                    {
+                        RaycastHit hit;
+                        if (Physics.Raycast(spawnPos + Vector3.up * 50f, Vector3.down, out hit, 100f))
+                            spawnPos.y = hit.point.y + 0.5f;
+                    }
                     try
                     {
                         Core.AddPrefab(trig.prefabToSpawn, spawnPos, Quaternion.Euler(90f, 0f, 0f), null);
@@ -1625,6 +1652,14 @@ namespace DarkwoodMultiplayer.Sync
     {
         /// <summary>Set true while we are applying a remote snapshot so patches can suppress re-broadcasts.</summary>
         public static bool ApplyingFromNetwork = false;
+
+        /// <summary>
+        /// Set true while inside a CharacterSounds method that EntitySoundSyncPatches
+        /// already handles (playGrowl, playSingleInstance, playEscapingLoop, playIdleLoop).
+        /// PlayerSoundSyncPatches checks this flag to avoid double-forwarding the
+        /// AudioController.Play call that happens inside these methods.
+        /// </summary>
+        public static bool InsideCharacterSounds = false;
 
         /// <summary>Reads the private "opened" field from a Door instance.</summary>
         /// <param name="door">The door instance.</param>

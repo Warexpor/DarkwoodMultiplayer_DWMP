@@ -1,6 +1,7 @@
 using BepInEx.Configuration;
 using BepInEx.Logging;
 using DarkwoodMultiplayer.Config;
+using DarkwoodMultiplayer.DebugTools;
 using DarkwoodMultiplayer.Networking;
 using HarmonyLib;
 using UnityEngine;
@@ -66,6 +67,7 @@ namespace DarkwoodMultiplayer
             Object.DontDestroyOnLoad(root);
 
             Network = root.AddComponent<LanNetworkManager>();
+            root.AddComponent<EntitySpawnerUI>();
 
             MultiplayerMenu.EnsureExists();
         }

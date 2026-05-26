@@ -19,6 +19,6 @@ C:\DarkwoodMod\DarkwoodMultiplayer\DarkwoodMultiplayer\bin\Release\MonoMod.Utils
 C:\DarkwoodMod\DarkwoodMultiplayer\DarkwoodMultiplayer\bin\Release\MonoMod.RuntimeDetour.xml
 C:\DarkwoodMod\DarkwoodMultiplayer\DarkwoodMultiplayer\obj\Release\DarkwoodMultiplayer.csproj.AssemblyReference.cache
 C:\DarkwoodMod\DarkwoodMultiplayer\DarkwoodMultiplayer\obj\Release\DarkwoodMultiplayer.csproj.CoreCompileInputs.cache
-C:\DarkwoodMod\DarkwoodMultiplayer\DarkwoodMultiplayer\obj\Release\Darkwood.2C2E47EE.Up2Date
 C:\DarkwoodMod\DarkwoodMultiplayer\DarkwoodMultiplayer\obj\Release\DarkwoodMultiplayer.dll
 C:\DarkwoodMod\DarkwoodMultiplayer\DarkwoodMultiplayer\obj\Release\DarkwoodMultiplayer.pdb
+C:\DarkwoodMod\DarkwoodMultiplayer\DarkwoodMultiplayer\obj\Release\Darkwood.2C2E47EE.Up2Date

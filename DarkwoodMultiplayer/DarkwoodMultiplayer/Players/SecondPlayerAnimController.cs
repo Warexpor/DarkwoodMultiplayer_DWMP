@@ -35,6 +35,10 @@ namespace DarkwoodMultiplayer.Players
         private bool _networkReverseLegs;
         private bool _hasNetworkLegFacing;
 
+        // True after FeetNeutral has fired during idle — guards against rotating
+        // the legs while the walk animation is still cycling to its neutral frame.
+        private bool _feetNeutralReached;
+
         /// <summary>Current locomotion state.</summary>
         public LocomotionState State => _state;
         /// <summary>Current horizontal flip state.</summary>
@@ -68,7 +72,7 @@ namespace DarkwoodMultiplayer.Players
                 ModRuntime.Log?.LogInfo("SecondPlayerAnimController: torso + legs animators ready.");
         }
 
-        // Stops legs animation when the feet-neurtral event fires during idle
+        // Stops legs animation when the feet-neutral event fires during idle
         private void OnLegsAnimationEvent(tk2dSpriteAnimator animator, tk2dSpriteAnimationClip clip, int frameNum)
         {
             if (_state != LocomotionState.Idle)
@@ -77,13 +81,18 @@ namespace DarkwoodMultiplayer.Players
             if (clip.GetFrame(frameNum).eventInfo == "FeetNeutral")
             {
                 _legsAnimator?.Stop();
+                _feetNeutralReached = true;
+                // Align to body at the neutral frame so the rotation is already
+                // correct when the blend in LateUpdate takes over.
+                if (_legsAnimator != null)
+                    _legsAnimator.transform.rotation = transform.rotation;
             }
         }
 
         // Continuously blend legs back to standing rotation when idling
         private void LateUpdate()
         {
-            if (_state == LocomotionState.Idle && _legsAnimator != null)
+            if (_state == LocomotionState.Idle && _legsAnimator != null && _feetNeutralReached)
             {
                 ResetLegsToStanding();
             }
@@ -137,13 +146,29 @@ namespace DarkwoodMultiplayer.Players
             }
             else if (wasMoving && !isMoving && _legsAnimator != null && _legsAnimator.Playing)
             {
-                // Transitioning from moving to idle — let the legs finish their current cycle naturally
+                // Walk clips reach FeetNeutral naturally and are stopped by
+                // OnLegsAnimationEvent.  Run clips have no FeetNeutral event
+                // so we must stop them immediately.
+                if (_legsAnimator.CurrentClip != null &&
+                    _legsAnimator.CurrentClip.name.IndexOf("Run") >= 0)
+                {
+                    _legsAnimator.Stop();
+                    _feetNeutralReached = true;
+                    if (_legsAnimator != null)
+                        _legsAnimator.transform.rotation = transform.rotation;
+                }
             }
 
             if (state == LocomotionState.Walk)
+            {
+                _feetNeutralReached = false;
                 AlignLegsToFacing(legFacingY, snapRunToBody: false);
+            }
             else if (state == LocomotionState.Run)
+            {
+                _feetNeutralReached = false;
                 AlignLegsToFacing(legFacingY, snapRunToBody: true);
+            }
         }
 
         /// <summary>

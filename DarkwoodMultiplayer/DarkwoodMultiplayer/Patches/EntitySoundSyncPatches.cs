@@ -36,13 +36,46 @@ namespace DarkwoodMultiplayer.Patches
             var msg = new EntitySoundMessage { HostId = hostId, SoundType = type };
             LanNetworkManager.Instance?.Send(NetMessageType.EntitySound, w => msg.Serialize(w), DeliveryMethod.ReliableOrdered);
         }
+
+        internal static void BroadcastIdleLoop(CharacterSounds sounds, string loopName)
+        {
+            if (ModRuntime.Network == null || ModRuntime.Network.Role != NetworkRole.Host)
+                return;
+            if (sounds == null || string.IsNullOrEmpty(loopName)) return;
+            Character c = sounds.character as Character;
+            if (c == null) return;
+            if (!CharacterTracker.TryGetStableId(c, out short hostId)) return;
+
+            var msg = new EntitySoundMessage { HostId = hostId, SoundType = EntitySoundType.Idle, LoopName = loopName };
+            LanNetworkManager.Instance?.Send(NetMessageType.EntitySound, w => msg.Serialize(w), DeliveryMethod.ReliableOrdered);
+        }
+    }
+
+    [HarmonyPatch(typeof(CharacterSounds), "playIdleLoop")]
+    public static class HostIdleLoopPatch
+    {
+        [HarmonyPrefix]
+        private static void Prefix() { TraverseHack.InsideCharacterSounds = true; }
+
+        [HarmonyPostfix]
+        private static void Postfix(CharacterSounds __instance, string loopName)
+        {
+            TraverseHack.InsideCharacterSounds = false;
+            if (string.IsNullOrEmpty(loopName)) return;
+            EntitySoundSyncHelper.BroadcastIdleLoop(__instance, loopName);
+        }
     }
 
     [HarmonyPatch(typeof(CharacterSounds), "playGrowl")]
     public static class HostGrowlSoundPatch
     {
+        [HarmonyPrefix]
+        private static void Prefix() { TraverseHack.InsideCharacterSounds = true; }
+
+        [HarmonyPostfix]
         private static void Postfix(CharacterSounds __instance)
         {
+            TraverseHack.InsideCharacterSounds = false;
             EntitySoundSyncHelper.Broadcast(__instance, EntitySoundType.Growl);
         }
     }
@@ -50,8 +83,13 @@ namespace DarkwoodMultiplayer.Patches
     [HarmonyPatch(typeof(CharacterSounds), "playEscapingLoop")]
     public static class HostEscapingSoundPatch
     {
+        [HarmonyPrefix]
+        private static void Prefix() { TraverseHack.InsideCharacterSounds = true; }
+
+        [HarmonyPostfix]
         private static void Postfix(CharacterSounds __instance)
         {
+            TraverseHack.InsideCharacterSounds = false;
             EntitySoundSyncHelper.Broadcast(__instance, EntitySoundType.Escaping);
         }
     }
@@ -59,8 +97,13 @@ namespace DarkwoodMultiplayer.Patches
     [HarmonyPatch(typeof(CharacterSounds), "playSingleInstance")]
     public static class HostSingleInstanceSoundPatch
     {
+        [HarmonyPrefix]
+        private static void Prefix() { TraverseHack.InsideCharacterSounds = true; }
+
+        [HarmonyPostfix]
         private static void Postfix(CharacterSounds __instance, string sound)
         {
+            TraverseHack.InsideCharacterSounds = false;
             if (string.IsNullOrEmpty(sound)) return;
 
             // Only broadcast AI-behavior sounds that animation events don't cover

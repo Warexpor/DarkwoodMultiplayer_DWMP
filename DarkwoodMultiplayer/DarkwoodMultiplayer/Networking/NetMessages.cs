@@ -70,7 +70,13 @@ namespace DarkwoodMultiplayer.Networking
         /// <summary>Host→Client: bullet impact FX (blood, wall hit, muzzle flash) at a world position.</summary>
         BulletImpact = 32,
         /// <summary>Either peer: player fired a weapon (sync muzzle flash, projectile visuals).</summary>
-        PlayerFiredWeapon = 33
+        PlayerFiredWeapon = 33,
+        /// <summary>Either peer: an inventory item was dropped into the world.</summary>
+        DroppedItemSpawn = 34,
+        /// <summary>Either peer: a networked dropped item was picked up.</summary>
+        DroppedItemPickup = 35,
+        /// <summary>Either peer: saw fuel/inventory state changed (convert or add fuel).</summary>
+        SawState = 36
     }
 
     /// <summary>
@@ -165,6 +171,8 @@ namespace DarkwoodMultiplayer.Networking
         public string TorsoClip;
         /// <summary>Current legs animation clip name.</summary>
         public string LegsClip;
+        /// <summary>Whether the player is currently trapped in a bear trap.</summary>
+        public bool InBearTrap;
 
         /// <summary>Serializes this message into the provided writer.</summary>
         public void Serialize(NetWriter writer)
@@ -182,6 +190,7 @@ namespace DarkwoodMultiplayer.Networking
             writer.Put(TorsoFacingY);
             writer.Put(TorsoClip);
             writer.Put(LegsClip);
+            writer.Put(InBearTrap);
         }
 
         /// <summary>Deserializes a PlayerStateMessage from the provided reader.</summary>
@@ -201,7 +210,8 @@ namespace DarkwoodMultiplayer.Networking
                 ReverseLegs = reader.GetBool(),
                 TorsoFacingY = reader.GetShort(),
                 TorsoClip = reader.GetString(),
-                LegsClip = reader.GetString()
+                LegsClip = reader.GetString(),
+                InBearTrap = reader.GetBool()
             };
         }
     }
@@ -589,17 +599,21 @@ namespace DarkwoodMultiplayer.Networking
         public short HostId;
         /// <summary>Which sound was played.</summary>
         public EntitySoundType SoundType;
+        /// <summary>Loop name for IdleLoop sound type (empty for other types).</summary>
+        public string LoopName;
 
         public void Serialize(NetWriter w)
         {
             w.Put(HostId);
             w.Put((byte)SoundType);
+            w.Put(LoopName ?? string.Empty);
         }
 
         public static EntitySoundMessage Deserialize(NetReader r) => new EntitySoundMessage
         {
             HostId = r.GetShort(),
-            SoundType = (EntitySoundType)r.GetByte()
+            SoundType = (EntitySoundType)r.GetByte(),
+            LoopName = r.GetString()
         };
     }
 
@@ -754,6 +768,61 @@ namespace DarkwoodMultiplayer.Networking
             MainHealth = r.GetInt(),
             DamageAmount = r.GetInt()
         };
+    }
+
+    /// <summary>
+    /// Spawns a dropped-item wrapper (DroppedItem) on the remote peer.
+    /// </summary>
+    public struct DroppedItemSpawnMessage
+    {
+        /// <summary>Unique identifier to correlate pick-up events.</summary>
+        public string Guid;
+        /// <summary>"Items/DroppedItem" or "Items/DroppedItem_water".</summary>
+        public string PrefabPath;
+        public float PosX, PosY, PosZ;
+        public float RotX, RotY, RotZ;
+        /// <summary>Item type identifier (e.g. "healthPotion").</summary>
+        public string ItemType;
+        public int Amount;
+        /// <summary>Current durability (absolute value, not 0-1 ratio).</summary>
+        public float Durability;
+        public int Ammo;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(Guid ?? string.Empty);
+            w.Put(PrefabPath ?? string.Empty);
+            w.Put(PosX); w.Put(PosY); w.Put(PosZ);
+            w.Put(RotX); w.Put(RotY); w.Put(RotZ);
+            w.Put(ItemType ?? string.Empty);
+            w.Put(Amount);
+            w.Put(Durability);
+            w.Put(Ammo);
+        }
+
+        public static DroppedItemSpawnMessage Deserialize(NetReader r) => new DroppedItemSpawnMessage
+        {
+            Guid = r.GetString(),
+            PrefabPath = r.GetString(),
+            PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat(),
+            RotX = r.GetFloat(), RotY = r.GetFloat(), RotZ = r.GetFloat(),
+            ItemType = r.GetString(),
+            Amount = r.GetInt(),
+            Durability = r.GetFloat(),
+            Ammo = r.GetInt()
+        };
+    }
+
+    /// <summary>
+    /// Notifies the remote peer that a networked dropped item was picked up.
+    /// </summary>
+    public struct DroppedItemPickupMessage
+    {
+        /// <summary>GUID of the dropped item being picked up.</summary>
+        public string Guid;
+
+        public void Serialize(NetWriter w) => w.Put(Guid ?? string.Empty);
+        public static DroppedItemPickupMessage Deserialize(NetReader r) => new DroppedItemPickupMessage { Guid = r.GetString() };
     }
 
     /// <summary>
@@ -1265,6 +1334,44 @@ namespace DarkwoodMultiplayer.Networking
             AimY = r.GetFloat(),
             PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat(),
             ProjectileCount = r.GetInt()
+        };
+    }
+
+    /// <summary>
+    /// Either peer: synchronises the state of a fuel-powered saw (fuel level + inventory) 
+    /// after a convert or add-fuel operation.
+    /// </summary>
+    public struct SawStateMessage
+    {
+        /// <summary>Saw world position X (lookup key on receiver).</summary>
+        public float PosX;
+        /// <summary>Saw world position Y.</summary>
+        public float PosY;
+        /// <summary>Saw world position Z.</summary>
+        public float PosZ;
+        /// <summary>Current fuel in the saw.</summary>
+        public float Fuel;
+        /// <summary>Current amount of wood logs in the saw's inventory.</summary>
+        public int WoodLogAmount;
+        /// <summary>Current amount of wood planks in the saw's inventory.</summary>
+        public int WoodAmount;
+
+        /// <summary>Serializes this message into the provided writer.</summary>
+        public void Serialize(NetWriter w)
+        {
+            w.Put(PosX); w.Put(PosY); w.Put(PosZ);
+            w.Put(Fuel);
+            w.Put(WoodLogAmount);
+            w.Put(WoodAmount);
+        }
+
+        /// <summary>Deserializes a SawStateMessage from the provided reader.</summary>
+        public static SawStateMessage Deserialize(NetReader r) => new SawStateMessage
+        {
+            PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat(),
+            Fuel = r.GetFloat(),
+            WoodLogAmount = r.GetInt(),
+            WoodAmount = r.GetInt()
         };
     }
 }

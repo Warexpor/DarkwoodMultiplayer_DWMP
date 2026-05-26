@@ -22,6 +22,9 @@ namespace DarkwoodMultiplayer.Players
             if (player == null)
                 return SecondPlayerAnimController.LocomotionState.Idle;
 
+            if (player.immobilised)
+                return SecondPlayerAnimController.LocomotionState.Idle;
+
             if (player.running)
                 return SecondPlayerAnimController.LocomotionState.Run;
 

@@ -37,6 +37,14 @@ namespace DarkwoodMultiplayer.Patches
             return p != null && t == p.transform;
         }
 
+        internal static bool IsEnemyTransform(Transform t)
+        {
+            if (t == null) return false;
+            Player p = Player.Instance;
+            if (p != null && t == p.transform) return false;
+            return t.GetComponent<Character>() != null;
+        }
+
         internal static bool IsNearPlayer(Vector3 pos)
         {
             Player p = Player.Instance;
@@ -51,9 +59,26 @@ namespace DarkwoodMultiplayer.Patches
         [HarmonyPrefix]
         private static void Prefix(string audioID, Transform parentObj)
         {
-            if (!PlayerAudioHelper.IsPlayerTransform(parentObj)) return;
-            Vector3 pos = parentObj != null ? parentObj.position : Player.Instance.transform.position;
-            PlayerAudioHelper.ForwardSound(audioID, 1f, pos);
+            if (parentObj == null) return;
+
+            if (PlayerAudioHelper.IsPlayerTransform(parentObj))
+            {
+                Vector3 pos = parentObj.position;
+                PlayerAudioHelper.ForwardSound(audioID, 1f, pos);
+                return;
+            }
+
+            // Enemy sounds: only forward from host (authoritative AI) to client.
+            // Skip if InsideCharacterSounds — EntitySoundSyncPatches already handles
+            // CharacterSounds-routed sounds and would cause a double-play.
+            if (!TraverseHack.InsideCharacterSounds
+                && ModRuntime.Network != null && ModRuntime.Network.Role == NetworkRole.Host
+                && PlayerAudioHelper.IsEnemyTransform(parentObj))
+            {
+                Vector3 pos = parentObj.position;
+                if (PlayerAudioHelper.IsNearPlayer(pos))
+                    PlayerAudioHelper.ForwardSound(audioID, 1f, pos);
+            }
         }
     }
 
@@ -64,9 +89,23 @@ namespace DarkwoodMultiplayer.Patches
         [HarmonyPrefix]
         private static void Prefix(string audioID, Transform parentObj, float volume)
         {
-            if (!PlayerAudioHelper.IsPlayerTransform(parentObj)) return;
-            Vector3 pos = parentObj != null ? parentObj.position : Player.Instance.transform.position;
-            PlayerAudioHelper.ForwardSound(audioID, volume, pos);
+            if (parentObj == null) return;
+
+            if (PlayerAudioHelper.IsPlayerTransform(parentObj))
+            {
+                Vector3 pos = parentObj.position;
+                PlayerAudioHelper.ForwardSound(audioID, volume, pos);
+                return;
+            }
+
+            if (!TraverseHack.InsideCharacterSounds
+                && ModRuntime.Network != null && ModRuntime.Network.Role == NetworkRole.Host
+                && PlayerAudioHelper.IsEnemyTransform(parentObj))
+            {
+                Vector3 pos = parentObj.position;
+                if (PlayerAudioHelper.IsNearPlayer(pos))
+                    PlayerAudioHelper.ForwardSound(audioID, volume, pos);
+            }
         }
     }
 
@@ -78,15 +117,30 @@ namespace DarkwoodMultiplayer.Patches
         private static void Prefix(string audioID, Vector3 worldPosition, Transform parentObj)
         {
             Vector3 pos = worldPosition;
+
             if (parentObj != null)
             {
-                if (!PlayerAudioHelper.IsPlayerTransform(parentObj)) return;
-                pos = parentObj.position;
+                if (PlayerAudioHelper.IsPlayerTransform(parentObj))
+                {
+                    pos = parentObj.position;
+                }
+                else if (!TraverseHack.InsideCharacterSounds
+                    && ModRuntime.Network != null && ModRuntime.Network.Role == NetworkRole.Host
+                    && PlayerAudioHelper.IsEnemyTransform(parentObj))
+                {
+                    pos = parentObj.position;
+                    if (!PlayerAudioHelper.IsNearPlayer(pos)) return;
+                }
+                else
+                {
+                    return;
+                }
             }
             else
             {
                 if (!PlayerAudioHelper.IsNearPlayer(worldPosition)) return;
             }
+
             PlayerAudioHelper.ForwardSound(audioID, 1f, pos);
         }
     }

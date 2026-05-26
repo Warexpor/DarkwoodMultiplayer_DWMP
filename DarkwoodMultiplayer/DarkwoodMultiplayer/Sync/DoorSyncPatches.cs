@@ -100,12 +100,19 @@ namespace DarkwoodMultiplayer.Sync
     [HarmonyPatch(typeof(Player), "progressBarCompleted")]
     public static class TrapPlacementPatch
     {
+        /// <summary>
+        /// Set to true while inside progressBarCompleted, so ObjectDestroyTrapPatch
+        /// can suppress fake removal messages caused by the inventory item being destroyed.
+        /// </summary>
+        internal static bool InsideTrapPlacement;
+
         private static string _pendingType;
         private static Vector3 _pendingPos;
         private static Quaternion _pendingRot;
 
         private static void Prefix(Player __instance)
         {
+            InsideTrapPlacement = true;
             _pendingType = null;
             if (!__instance.placingItem) return;
             if (InvItemClass.isNull(__instance.currentItem)) return;
@@ -120,6 +127,8 @@ namespace DarkwoodMultiplayer.Sync
 
         private static void Postfix(Player __instance)
         {
+            InsideTrapPlacement = false;
+
             if (string.IsNullOrEmpty(_pendingType))
                 return;
             if (ModRuntime.Network == null)

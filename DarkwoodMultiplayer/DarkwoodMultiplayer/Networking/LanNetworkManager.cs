@@ -29,6 +29,9 @@ namespace DarkwoodMultiplayer.Networking
         private bool _wasDragging;
         private bool _handshakeComplete;
 
+        private bool _remoteInBearTrap;
+        private Vector3 _remoteBearTrapPos;
+
         public NetworkRole Role => _role;
         public bool IsConnected => _peer != null && _peer.ConnectionState == ConnectionState.Connected;
         public string StatusText { get; private set; } = "Offline";
@@ -173,7 +176,8 @@ namespace DarkwoodMultiplayer.Networking
                 ReverseLegs = PlayerAnimationSnapshot.ReadReverseLegs(local),
                 TorsoFacingY = PlayerAnimationSnapshot.ReadTorsoFacingY(local),
                 TorsoClip = PlayerAnimationSnapshot.ReadTorsoClip(local),
-                LegsClip = PlayerAnimationSnapshot.ReadLegsClip(local)
+                LegsClip = PlayerAnimationSnapshot.ReadLegsClip(local),
+                InBearTrap = local.inBearTrap
             };
             Send(NetMessageType.PlayerState, w => msg.Serialize(w));
 
@@ -509,6 +513,17 @@ namespace DarkwoodMultiplayer.Networking
                     try { HandlePlayerFiredWeapon(PlayerFiredWeaponMessage.Deserialize(new NetReader(payload))); }
                     finally { TraverseHack.ApplyingFromNetwork = false; }
                     break;
+                case NetMessageType.DroppedItemSpawn:
+                    HandleDroppedItemSpawn(DroppedItemSpawnMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.DroppedItemPickup:
+                    HandleDroppedItemPickup(DroppedItemPickupMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.SawState:
+                    TraverseHack.ApplyingFromNetwork = true;
+                    try { HandleSawState(SawStateMessage.Deserialize(new NetReader(payload))); }
+                    finally { TraverseHack.ApplyingFromNetwork = false; }
+                    break;
                 }
             }
             finally
@@ -555,6 +570,11 @@ namespace DarkwoodMultiplayer.Networking
                     new Vector3(state.PosX, state.PosY, state.PosZ),
                     state.TorsoFacingY);
 
+                _remoteInBearTrap = state.InBearTrap;
+                _remoteBearTrapPos = new Vector3(state.PosX, state.PosY, state.PosZ);
+                if (state.InBearTrap)
+                    ModRuntime.Log?.LogInfo("[BearTrapState] host: remote player trapped at " + _remoteBearTrapPos);
+
                 EnsureRemoteProxy();
                 if (_remoteProxy == null)
                     return;
@@ -590,6 +610,11 @@ namespace DarkwoodMultiplayer.Networking
             }
 
             // Client receives host player state
+            _remoteInBearTrap = state.InBearTrap;
+            _remoteBearTrapPos = new Vector3(state.PosX, state.PosY, state.PosZ);
+            if (state.InBearTrap)
+                ModRuntime.Log?.LogInfo("[BearTrapState] client: host trapped at " + _remoteBearTrapPos);
+
             EnsureRemoteProxy();
             if (_remoteProxy == null)
                 return;
@@ -610,6 +635,23 @@ namespace DarkwoodMultiplayer.Networking
             };
 
             _remoteProxy.ApplyNetworkState(hostState);
+        }
+
+        /// <summary>
+        /// Returns true if the remote player is currently trapped in a bear trap.
+        /// Removed distance check because the client's bear trap GameObject may be
+        /// at a different position than the trapped player (e.g. dropped item vs
+        /// world pool trap), making the distance check unreliable.
+        /// </summary>
+        public bool RemoteInBearTrap => _remoteInBearTrap;
+
+        public bool IsRemotePlayerTrappedNear(Vector3 trapPos)
+        {
+            if (!_remoteInBearTrap)
+                return false;
+
+            ModRuntime.Log?.LogInfo("[BearTrapGuard] remote trapped, blocking interaction");
+            return true;
         }
 
         private void HandleEntityState(EntityStateMessage msg)
@@ -1026,6 +1068,52 @@ namespace DarkwoodMultiplayer.Networking
             }
         }
 
+        private void HandleSawState(SawStateMessage msg)
+        {
+            Vector3 pos = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
+            Saw saw = FindSawByPos(pos);
+            if (saw == null)
+            {
+                ModRuntime.Log?.LogInfo("[SawSync] saw not found at " + pos);
+                return;
+            }
+
+            saw.fuel = Mathf.Clamp(msg.Fuel, 0f, saw.maxFuel);
+
+            Inventory inv = Traverse.Create(saw).Field("inventory").GetValue<Inventory>();
+            if (inv != null)
+            {
+                SyncItemAmount(inv, "woodLog", msg.WoodLogAmount);
+                SyncItemAmount(inv, "wood", msg.WoodAmount);
+            }
+
+            saw.refresh();
+            ModRuntime.Log?.LogInfo("[SawSync] applied state at " + pos + " fuel=" + msg.Fuel);
+        }
+
+        private static Saw FindSawByPos(Vector3 pos)
+        {
+            Saw[] all = UnityEngine.Object.FindObjectsOfType<Saw>();
+            for (int i = 0; i < all.Length; i++)
+            {
+                if (all[i] == null) continue;
+                if (Vector3.Distance(all[i].transform.position, pos) < 2f)
+                    return all[i];
+            }
+            return null;
+        }
+
+        private static void SyncItemAmount(Inventory inv, string itemType, int desiredAmount)
+        {
+            InvItemClass item = inv.getItem(itemType);
+            int currentAmount = InvItemClass.isNull(item) ? 0 : item.amount;
+            if (currentAmount == desiredAmount) return;
+            if (currentAmount > 0)
+                item.removeAmount(currentAmount);
+            if (desiredAmount > 0)
+                inv.addItemType(itemType, desiredAmount);
+        }
+
         private void HandleWorkbenchLevel(WorkbenchLevelMessage msg)
         {
             if (Singleton<Controller>.Instance == null) return;
@@ -1250,6 +1338,27 @@ namespace DarkwoodMultiplayer.Networking
             if (!IsConnected) return;
             if (IsApplyingRemoteState) return;
             Send(NetMessageType.GasIgnite, w => msg.Serialize(w));
+        }
+
+        public void SendDroppedItemSpawn(DroppedItemSpawnMessage msg)
+        {
+            if (!IsConnected) return;
+            if (IsApplyingRemoteState) return;
+            Send(NetMessageType.DroppedItemSpawn, w => msg.Serialize(w), LiteNetLib.DeliveryMethod.ReliableOrdered);
+        }
+
+        public void SendDroppedItemPickup(DroppedItemPickupMessage msg)
+        {
+            if (!IsConnected) return;
+            if (IsApplyingRemoteState) return;
+            Send(NetMessageType.DroppedItemPickup, w => msg.Serialize(w), LiteNetLib.DeliveryMethod.ReliableOrdered);
+        }
+
+        public void SendSawState(SawStateMessage msg)
+        {
+            if (!IsConnected) return;
+            if (IsApplyingRemoteState) return;
+            Send(NetMessageType.SawState, w => msg.Serialize(w), LiteNetLib.DeliveryMethod.ReliableOrdered);
         }
 
         public void SendPlayerAnimation(PlayerAnimationMessage msg)
@@ -1593,6 +1702,10 @@ namespace DarkwoodMultiplayer.Networking
                     if (!string.IsNullOrEmpty(c.sounds.defensive))
                         c.sounds.playSingleInstance(c.sounds.defensive);
                     break;
+                case EntitySoundType.Idle:
+                    if (!string.IsNullOrEmpty(msg.LoopName))
+                        c.sounds.playIdleLoop(msg.LoopName);
+                    break;
                 case EntitySoundType.Escaping:
                     c.sounds.playEscapingLoop();
                     break;
@@ -1918,6 +2031,67 @@ namespace DarkwoodMultiplayer.Networking
                     }
                 }
             }
+        }
+
+        private void HandleDroppedItemSpawn(DroppedItemSpawnMessage msg)
+        {
+            if (string.IsNullOrEmpty(msg.Guid) || string.IsNullOrEmpty(msg.PrefabPath) || string.IsNullOrEmpty(msg.ItemType))
+                return;
+            if (Players.DroppedItemIdentifier.FindById(msg.Guid) != null)
+                return;
+            if (Singleton<ItemsDatabase>.Instance == null || !Singleton<ItemsDatabase>.Instance.hasItem(msg.ItemType))
+            {
+                ModRuntime.Log?.LogWarning("[DroppedItemSpawn] unknown item type: " + msg.ItemType);
+                return;
+            }
+
+            Vector3 pos = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
+            Quaternion rot = Quaternion.Euler(msg.RotX, msg.RotY, msg.RotZ);
+
+            GameObject go = Core.AddPrefab(msg.PrefabPath, pos, rot, Core.ItemContainer);
+            if (go == null) return;
+
+            Inventory inv = go.GetComponent<Inventory>();
+            if (inv == null || inv.slots == null || inv.slots.Count == 0) return;
+
+            InvSlot slot = inv.slots[0];
+            slot.inventory = inv;
+
+            InvItemClass item = new InvItemClass(msg.ItemType, 1f, msg.Amount);
+            if (item.baseClass == null)
+            {
+                ModRuntime.Log?.LogWarning("[DroppedItemSpawn] failed to assign baseClass for " + msg.ItemType);
+                return;
+            }
+
+            slot.createItem(item);
+
+            if (!InvItemClass.isNull(slot.invItem))
+            {
+                slot.invItem.durability = msg.Durability;
+                if (slot.invItem.baseClass.hasAmmo)
+                    slot.invItem.ammo = msg.Ammo;
+            }
+
+            Core.addToSaveable(go, isDynamic: true);
+            Singleton<WorldGrid>.Instance?.registerToNode(go);
+
+            var ident = go.AddComponent<Players.DroppedItemIdentifier>();
+            ident.Id = msg.Guid;
+            Players.DroppedItemIdentifier.Register(ident);
+
+            ModRuntime.Log?.LogInfo("[DroppedItemSpawn] " + msg.ItemType + " x" + msg.Amount + " guid=" + msg.Guid);
+        }
+
+        private void HandleDroppedItemPickup(DroppedItemPickupMessage msg)
+        {
+            if (string.IsNullOrEmpty(msg.Guid)) return;
+
+            var ident = Players.DroppedItemIdentifier.FindById(msg.Guid);
+            if (ident == null || ident.gameObject == null) return;
+
+            ModRuntime.Log?.LogInfo("[DroppedItemPickup] removing guid=" + msg.Guid);
+            UnityEngine.Object.Destroy(ident.gameObject);
         }
 
         public void OnNetworkReceiveUnconnected(IPEndPoint remoteEndPoint, NetPacketReader reader, UnconnectedMessageType messageType)
