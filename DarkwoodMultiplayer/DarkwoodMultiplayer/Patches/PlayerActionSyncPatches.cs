@@ -80,6 +80,8 @@ namespace DarkwoodMultiplayer.Patches
         private static string _capturedItemType;
         private static float _capturedAimY;
         private static float _capturedDistance;
+        private static GameObject _capturedHeldItem;
+        private static float _capturedSpread;
 
         private static bool Prefix(Player __instance)
         {
@@ -93,6 +95,7 @@ namespace DarkwoodMultiplayer.Patches
                     _capturedItemType = __instance.currentItem.type;
                 _capturedAimY = __instance.transform.eulerAngles.y;
                 _capturedDistance = Mathf.Clamp(__instance.distanceToCursor(), 10f, 370f);
+                _capturedHeldItem = __instance.heldItem;
             }
             catch { _capturedItemType = null; }
 
@@ -103,7 +106,23 @@ namespace DarkwoodMultiplayer.Patches
         {
             if (string.IsNullOrEmpty(_capturedItemType)) return;
             if (ModRuntime.Network == null) return;
+            if (ModRuntime.Network.Role != NetworkRole.Client) return;
             if (TraverseHack.ApplyingFromNetwork) return;
+
+            // Extract the actual spread from the thrown item's Rigidbody velocity.
+            // throwItem() sets velocity = Quaternion.Euler(0, Random.Range(-5,5), 0) * transform.up * magnitude,
+            // so the angle between velocity direction and AimY is the spread the client used.
+            _capturedSpread = 0f;
+            if (_capturedHeldItem != null)
+            {
+                Rigidbody rb = _capturedHeldItem.GetComponent<Rigidbody>();
+                if (rb != null && rb.velocity.sqrMagnitude > 0.01f)
+                {
+                    Vector3 velDir = rb.velocity.normalized;
+                    float velAngle = Mathf.Atan2(velDir.x, velDir.z) * Mathf.Rad2Deg;
+                    _capturedSpread = Mathf.DeltaAngle(_capturedAimY, velAngle);
+                }
+            }
 
             Vector3 pos = __instance.transform.position;
             ModRuntime.Network.SendThrowableSpawn(new ThrowableSpawnMessage
@@ -111,12 +130,14 @@ namespace DarkwoodMultiplayer.Patches
                 ItemType = _capturedItemType,
                 PosX = pos.x, PosY = pos.y, PosZ = pos.z,
                 AimY = _capturedAimY,
-                Distance = _capturedDistance
+                Distance = _capturedDistance,
+                Spread = _capturedSpread
             });
 
-            ModRuntime.Log?.LogInfo("[ThrowableSync] sent " + _capturedItemType + " from " + pos + " aimY=" + _capturedAimY);
+            ModRuntime.Log?.LogInfo("[ThrowableSync] sent " + _capturedItemType + " from " + pos + " aimY=" + _capturedAimY + " spread=" + _capturedSpread);
 
             _capturedItemType = null;
+            _capturedHeldItem = null;
         }
     }
 
@@ -134,6 +155,23 @@ namespace DarkwoodMultiplayer.Patches
             if (net == null || net.Role == NetworkRole.Offline) return;
             if (TraverseHack.ApplyingFromNetwork) return;
             if (Sync.WorldPhysicsSyncService._suppressBroadcast) return;
+
+            // Suppress explosion trigger for host-synced ThrownItems (SpawnThrownItem).
+            // The host's spawned ThrownItem explosion is a local side-effect; the
+            // authoritative explosion comes from the client's own ThrownItem via its
+            // ExplosionTriggerMessage. Without this suppression, the host's spawned
+            // ThrownItem sends a duplicate explosion trigger to the client, causing
+            // confusing double-FX at potentially different positions.
+            ThrownItem ti = __instance.GetComponent<ThrownItem>();
+            if (ti != null && ti.objectThatSpawnedMe != null)
+            {
+                Transform proxyT = net.RemoteProxyTransform;
+                if (proxyT != null && ti.objectThatSpawnedMe == proxyT)
+                {
+                    ModRuntime.Log?.LogInfo("[ExplosionSync] skip host-synced ThrownItem explosion at " + __instance.transform.position);
+                    return;
+                }
+            }
 
             bool flaming = false;
             try { flaming = (bool)HarmonyLib.Traverse.Create(__instance).Field("flaming").GetValue(); } catch { }

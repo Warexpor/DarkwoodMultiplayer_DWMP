@@ -21,7 +21,7 @@ namespace DarkwoodMultiplayer.Patches
             return inv != null && inv.invType == Inventory.InvType.itemInv;
         }
 
-        internal static void SendContainerAction(ContainerAction action, Vector3 pos, int slotIdx, string itemType, int amount, float durability, int ammo)
+        internal static void SendContainerAction(ContainerAction action, Vector3 pos, int slotIdx, string itemType, int amount, float durability, int ammo, bool isPlayerPlaced = false)
         {
             if (LanNetworkManager.IsApplyingRemoteState) return;
             if (Core.loadingGame) return;
@@ -36,7 +36,8 @@ namespace DarkwoodMultiplayer.Patches
                 ItemType = itemType ?? "",
                 Amount = amount,
                 Durability = durability,
-                Ammo = ammo
+                Ammo = ammo,
+                IsPlayerPlaced = isPlayerPlaced
             };
             LanNetworkManager.Instance.Send(NetMessageType.ContainerItem, w => msg.Serialize(w), DeliveryMethod.ReliableOrdered);
         }
@@ -182,7 +183,7 @@ namespace DarkwoodMultiplayer.Patches
         private static void Postfix(InvSlot __instance)
         {
             if (!_isContainer) return;
-            ContainerSyncHelpers.SendContainerAction(ContainerAction.PlaceItem, _pos, _idx, _type, _amount, _dur, _ammo);
+            ContainerSyncHelpers.SendContainerAction(ContainerAction.PlaceItem, _pos, _idx, _type, _amount, _dur, _ammo, isPlayerPlaced: true);
             _isContainer = false;
         }
     }
@@ -224,11 +225,11 @@ namespace DarkwoodMultiplayer.Patches
                 if (before.TryGetValue(kv.Key, out var prev))
                 {
                     if (kv.Value.Type == prev.Type && kv.Value.Amount > prev.Amount)
-                        ContainerSyncHelpers.SendContainerAction(ContainerAction.PlaceItem, pos, kv.Key, kv.Value.Type, kv.Value.Amount - prev.Amount, kv.Value.Durability, kv.Value.Ammo);
+                        ContainerSyncHelpers.SendContainerAction(ContainerAction.PlaceItem, pos, kv.Key, kv.Value.Type, kv.Value.Amount - prev.Amount, kv.Value.Durability, kv.Value.Ammo, isPlayerPlaced: true);
                 }
                 else
                 {
-                    ContainerSyncHelpers.SendContainerAction(ContainerAction.PlaceItem, pos, kv.Key, kv.Value.Type, kv.Value.Amount, kv.Value.Durability, kv.Value.Ammo);
+                    ContainerSyncHelpers.SendContainerAction(ContainerAction.PlaceItem, pos, kv.Key, kv.Value.Type, kv.Value.Amount, kv.Value.Durability, kv.Value.Ammo, isPlayerPlaced: true);
                 }
             }
         }
@@ -316,7 +317,7 @@ namespace DarkwoodMultiplayer.Patches
         private static void Postfix(InvSlot __instance)
         {
             if (!_isContainer) return;
-            ContainerSyncHelpers.SendContainerAction(ContainerAction.PlaceItem, _pos, _idx, _type, _amount, _dur, _ammo);
+            ContainerSyncHelpers.SendContainerAction(ContainerAction.PlaceItem, _pos, _idx, _type, _amount, _dur, _ammo, isPlayerPlaced: true);
             _isContainer = false;
         }
     }

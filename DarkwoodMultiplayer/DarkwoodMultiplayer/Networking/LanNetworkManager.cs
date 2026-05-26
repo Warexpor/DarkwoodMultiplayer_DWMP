@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
 using DarkwoodMultiplayer.Audio;
+using DarkwoodMultiplayer.Patches;
 using DarkwoodMultiplayer.Players;
 using DarkwoodMultiplayer.Sync;
 using HarmonyLib;
@@ -524,6 +525,33 @@ namespace DarkwoodMultiplayer.Networking
                     try { HandleSawState(SawStateMessage.Deserialize(new NetReader(payload))); }
                     finally { TraverseHack.ApplyingFromNetwork = false; }
                     break;
+                case NetMessageType.ShadowEvent:
+                    HandleShadowEvent(ShadowEventMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.ShadowSpawn:
+                    HandleShadowSpawn(ShadowSpawnMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.ScenarioSync:
+                    HandleScenarioSync(ScenarioSyncMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.ScenarioEventFired:
+                    HandleScenarioEventFired(ScenarioEventFiredMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.EntityBurning:
+                    HandleEntityBurning(EntityBurningMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.LiquidStopBurning:
+                    HandleLiquidStopBurning(LiquidStopBurningMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.ExplosionSpawnObject:
+                    HandleExplosionSpawnObject(ExplosionSpawnObjectMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.PlayerBurning:
+                    HandlePlayerBurning(PlayerBurningMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.ClientStateBackup:
+                    HandleClientStateBackup(ClientStateBackupMessage.Deserialize(new NetReader(payload)));
+                    break;
                 }
             }
             finally
@@ -930,6 +958,9 @@ namespace DarkwoodMultiplayer.Networking
             }
             else if (msg.Action == ContainerAction.PlaceItem)
             {
+                if (msg.IsPlayerPlaced)
+                    Patches.ItemDoublePickupPatch.MarkContainerSlotPlayerPlaced(pos, msg.SlotIndex);
+
                 if (msg.SlotIndex < inv.slots.Count)
                 {
                     InvSlot slot = inv.slots[msg.SlotIndex];
@@ -1066,6 +1097,91 @@ namespace DarkwoodMultiplayer.Networking
                 }
                 break;
             }
+        }
+
+        private void HandleShadowEvent(ShadowEventMessage msg)
+        {
+            if (_role != NetworkRole.Client) return;
+            if (Player.Instance == null) return;
+
+            // Spawn local shadows around client player + receive exact host positions via ShadowSpawnMessage
+            Player.Instance.tryToSpawnShadow();
+
+            ModRuntime.Log?.LogInfo("[ShadowSync] client triggered local NightShadows, also awaiting host ShadowSpawn messages");
+        }
+
+        private void HandleShadowSpawn(ShadowSpawnMessage msg)
+        {
+            if (_role != NetworkRole.Client) return;
+            if (Player.Instance == null) return;
+
+            if (Core.isDay() || Singleton<CharacterSpawner>.Instance.shadowsRemove)
+                return;
+
+            Vector3 pos = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
+            Quaternion rot = Quaternion.Euler(90f, msg.RotY, 0f);
+            Core.AddPrefab("characters/fakechars/shadow", pos, rot, null);
+        }
+
+        private void HandleScenarioSync(ScenarioSyncMessage msg)
+        {
+            if (_role != NetworkRole.Client) return;
+
+            var ns = Singleton<NightScenarios>.Instance;
+            if (ns == null || string.IsNullOrEmpty(msg.ScenarioName))
+                return;
+
+            NightScenario scenario = ns.getScenario(msg.ScenarioName);
+            if (scenario == null)
+            {
+                ModRuntime.Log?.LogWarning($"[ScenarioSync] unknown scenario '{msg.ScenarioName}'");
+                return;
+            }
+
+            ns.currentScenario = scenario;
+            ModRuntime.Log?.LogInfo($"[ScenarioSync] client set currentScenario to '{msg.ScenarioName}'");
+        }
+
+        private void HandleScenarioEventFired(ScenarioEventFiredMessage msg)
+        {
+            if (_role != NetworkRole.Client) return;
+            if (msg.EventIndex < 0) return;
+
+            var ns = Singleton<NightScenarios>.Instance;
+            if (ns == null) return;
+
+            NightScenario scenario = null;
+            for (int i = 0; i < ns.scenarios.Count; i++)
+            {
+                if (ns.scenarios[i] != null && ns.scenarios[i].nightId == msg.NightId)
+                {
+                    scenario = ns.scenarios[i];
+                    break;
+                }
+            }
+
+            if (scenario == null)
+            {
+                ModRuntime.Log?.LogWarning($"[ScenarioEventFired] unknown nightId {msg.NightId}");
+                return;
+            }
+
+            if (msg.EventIndex >= scenario.customEventAndInts.Count)
+            {
+                ModRuntime.Log?.LogWarning($"[ScenarioEventFired] index {msg.EventIndex} out of range (count={scenario.customEventAndInts.Count})");
+                return;
+            }
+
+            if (scenario.customEventAndInts[msg.EventIndex].customEvent == null)
+            {
+                ModRuntime.Log?.LogWarning($"[ScenarioEventFired] null CustomEvent at index {msg.EventIndex}");
+                return;
+            }
+
+            ModRuntime.Log?.LogInfo($"[ScenarioEventFired] host fired event index {msg.EventIndex} in nightId {msg.NightId}");
+
+            Patches.ScenarioPendingEventState.PendingEventIndex = msg.EventIndex;
+            Patches.ScenarioPendingEventState.PendingScenario = scenario;
         }
 
         private void HandleSawState(SawStateMessage msg)
@@ -1276,6 +1392,60 @@ namespace DarkwoodMultiplayer.Networking
             Send(NetMessageType.ItemSpawn, w => msg.Serialize(w));
         }
 
+        public void SendShadowEvent(ShadowEventMessage msg)
+        {
+            if (!IsConnected) return;
+            if (IsApplyingRemoteState) return;
+            Send(NetMessageType.ShadowEvent, w => msg.Serialize(w), DeliveryMethod.ReliableOrdered);
+        }
+
+        public void SendShadowSpawn(ShadowSpawnMessage msg)
+        {
+            if (!IsConnected) return;
+            Send(NetMessageType.ShadowSpawn, w => msg.Serialize(w), DeliveryMethod.ReliableOrdered);
+        }
+
+        public void SendScenarioSync(ScenarioSyncMessage msg)
+        {
+            if (!IsConnected) return;
+            Send(NetMessageType.ScenarioSync, w => msg.Serialize(w), DeliveryMethod.ReliableOrdered);
+        }
+
+        public void SendScenarioEventFired(int nightId, int eventIndex)
+        {
+            if (!IsConnected) return;
+            var msg = new ScenarioEventFiredMessage { NightId = nightId, EventIndex = eventIndex };
+            Send(NetMessageType.ScenarioEventFired, w => msg.Serialize(w), DeliveryMethod.ReliableOrdered);
+        }
+
+        public void SendEntityBurning(short entityId, bool isBurning, float burnTime = 0, float modifier = 0, float interval = 0)
+        {
+            if (!IsConnected) return;
+            var msg = new EntityBurningMessage { EntityId = entityId, IsBurning = isBurning, BurnTime = burnTime, Modifier = modifier, Interval = interval };
+            Send(NetMessageType.EntityBurning, w => msg.Serialize(w), DeliveryMethod.ReliableOrdered);
+        }
+
+        public void SendLiquidStopBurning(Vector3 pos)
+        {
+            if (!IsConnected) return;
+            var msg = new LiquidStopBurningMessage { PosX = pos.x, PosY = pos.y, PosZ = pos.z };
+            Send(NetMessageType.LiquidStopBurning, w => msg.Serialize(w), DeliveryMethod.ReliableOrdered);
+        }
+
+        public void SendPlayerBurning(bool isBurning, float burnTime = 0)
+        {
+            if (!IsConnected) return;
+            var msg = new PlayerBurningMessage { IsBurning = isBurning, BurnTime = burnTime };
+            Send(NetMessageType.PlayerBurning, w => msg.Serialize(w), DeliveryMethod.ReliableOrdered);
+        }
+
+        public void SendExplosionSpawnObject(string prefabName, Vector3 pos, Vector3 rot)
+        {
+            if (!IsConnected) return;
+            var msg = new ExplosionSpawnObjectMessage { PrefabName = prefabName, PosX = pos.x, PosY = pos.y, PosZ = pos.z, RotX = rot.x, RotY = rot.y, RotZ = rot.z };
+            Send(NetMessageType.ExplosionSpawnObject, w => msg.Serialize(w), DeliveryMethod.ReliableOrdered);
+        }
+
         public void SendGeneratorState(GeneratorState gs)
         {
             if (!IsConnected) return;
@@ -1330,14 +1500,14 @@ namespace DarkwoodMultiplayer.Networking
         {
             if (!IsConnected) return;
             if (IsApplyingRemoteState) return;
-            Send(NetMessageType.GasTrailSpawn, w => msg.Serialize(w));
+            Send(NetMessageType.GasTrailSpawn, w => msg.Serialize(w), DeliveryMethod.ReliableOrdered);
         }
 
         public void SendGasIgnite(GasIgniteMessage msg)
         {
             if (!IsConnected) return;
             if (IsApplyingRemoteState) return;
-            Send(NetMessageType.GasIgnite, w => msg.Serialize(w));
+            Send(NetMessageType.GasIgnite, w => msg.Serialize(w), DeliveryMethod.ReliableOrdered);
         }
 
         public void SendDroppedItemSpawn(DroppedItemSpawnMessage msg)
@@ -1405,6 +1575,24 @@ namespace DarkwoodMultiplayer.Networking
             Send(NetMessageType.SaveSync, w => new SaveSyncMessage().Serialize(w), LiteNetLib.DeliveryMethod.ReliableOrdered);
         }
 
+        /// <summary>Sends the client's inventory/skills/state backup to the host.</summary>
+        public void SendClientStateBackup()
+        {
+            if (!IsConnected) return;
+            if (_role != NetworkRole.Client) return;
+            try
+            {
+                var data = ClientStateBackup.CollectBackupData();
+                string json = ClientStateBackup.SerializeToJson(data);
+                Send(NetMessageType.ClientStateBackup, w => new ClientStateBackupMessage { JsonData = json }.Serialize(w), LiteNetLib.DeliveryMethod.ReliableOrdered);
+                ModRuntime.Log?.LogInfo("[ClientBackup] sent backup to host (" + (data.InventoryItems?.Count ?? 0) + " items, " + (data.Skills?.Count ?? 0) + " skills)");
+            }
+            catch (System.Exception ex)
+            {
+                ModRuntime.Log?.LogError("[ClientBackup] failed to send: " + ex.Message);
+            }
+        }
+
         /// <summary>Handles a save-sync trigger from the remote peer.</summary>
         private void HandleSaveSync()
         {
@@ -1439,11 +1627,31 @@ namespace DarkwoodMultiplayer.Networking
                 // shows consistent timestamps across players.
                 if (Core.currentProfile != null)
                     Core.currentProfile.timeSaved = System.DateTime.Now.ToString();
+
+                // Client just saved (triggered by host) — send backup to host
+                if (_role == NetworkRole.Client)
+                    SendClientStateBackup();
             }
             finally
             {
                 _isRemoteSaveInProgress = false;
             }
+        }
+
+        /// <summary>Handles a client state backup message from the client. Host saves it to disk.</summary>
+        private void HandleClientStateBackup(ClientStateBackupMessage msg)
+        {
+            if (_role != NetworkRole.Host)
+            {
+                ModRuntime.Log?.LogWarning("[ClientBackup] received backup but not host, ignoring");
+                return;
+            }
+            if (string.IsNullOrEmpty(msg.JsonData))
+            {
+                ModRuntime.Log?.LogWarning("[ClientBackup] received empty backup data");
+                return;
+            }
+            ClientStateBackup.SaveBackupFile(msg.JsonData);
         }
 
         private void SendWorldSnapshot()
@@ -1812,6 +2020,7 @@ namespace DarkwoodMultiplayer.Networking
 
         private void HandleThrowableSpawn(ThrowableSpawnMessage msg)
         {
+            if (_role != NetworkRole.Host) return;
             Transform sourceT = _remoteProxy != null ? _remoteProxy.transform : null;
             Sync.WorldPhysicsSyncService.SpawnThrownItem(msg, sourceT);
         }
@@ -1850,7 +2059,14 @@ namespace DarkwoodMultiplayer.Networking
             TraverseHack.ApplyingFromNetwork = true;
             try
             {
-                AudioController.Play(msg.SoundId, pos, null, Mathf.Clamp01(msg.Volume));
+                var audioObj = AudioController.Play(msg.SoundId, pos, null, Mathf.Clamp01(msg.Volume));
+                if (audioObj != null)
+                {
+                    audioObj.primaryAudioSource.spatialBlend = 1f;
+                    audioObj.primaryAudioSource.minDistance = 30f;
+                    audioObj.primaryAudioSource.maxDistance = 500f;
+                    audioObj.primaryAudioSource.rolloffMode = AudioRolloffMode.Linear;
+                }
             }
             finally { TraverseHack.ApplyingFromNetwork = false; }
         }
@@ -1865,6 +2081,119 @@ namespace DarkwoodMultiplayer.Networking
         {
             Vector3 pos = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
             Sync.WorldPhysicsSyncService.IgniteGasAtPos(pos);
+        }
+
+        private void HandleEntityBurning(EntityBurningMessage msg)
+        {
+            var entity = Sync.CharacterTracker.FindByStableId(msg.EntityId);
+            if (entity == null) return;
+            TraverseHack.ApplyingFromNetwork = true;
+            try
+            {
+                if (msg.IsBurning)
+                {
+                    var burn = entity.GetComponent<Burn>();
+                    if (burn == null)
+                    {
+                        entity.gameObject.AddComponent<Burn>().burnTime = msg.BurnTime;
+                    }
+                }
+                else
+                {
+                    var burn = entity.GetComponent<Burn>();
+                    if (burn != null)
+                    {
+                        burn.stop();
+                    }
+                }
+            }
+            finally { TraverseHack.ApplyingFromNetwork = false; }
+        }
+
+        private void HandlePlayerBurning(PlayerBurningMessage msg)
+        {
+            var proxy = Players.RemotePlayerProxy.Instance;
+            if (proxy == null) return;
+            TraverseHack.ApplyingFromNetwork = true;
+            try
+            {
+                if (msg.IsBurning)
+                {
+                    var burn = proxy.GetComponent<Burn>();
+                    if (burn == null)
+                    {
+                        burn = proxy.gameObject.AddComponent<Burn>();
+                        burn.burnTime = msg.BurnTime;
+                        ModRuntime.Log?.LogInfo("[PlayerBurnSync] applied Burn to proxy, burnTime=" + msg.BurnTime);
+                    }
+                }
+                else
+                {
+                    var burn = proxy.GetComponent<Burn>();
+                    if (burn != null)
+                    {
+                        burn.stop();
+                        ModRuntime.Log?.LogInfo("[PlayerBurnSync] removed Burn from proxy");
+                    }
+                }
+            }
+            finally { TraverseHack.ApplyingFromNetwork = false; }
+        }
+
+        private void HandleLiquidStopBurning(LiquidStopBurningMessage msg)
+        {
+            Vector3 pos = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
+            var hits = Physics.OverlapSphere(pos, 1.5f);
+            for (int i = 0; i < hits.Length; i++)
+            {
+                var liq = hits[i].GetComponent<Liquid>();
+                if (liq != null)
+                {
+                    TraverseHack.ApplyingFromNetwork = true;
+                    try
+                    {
+                        Traverse.Create(liq).Method("stopBurning").GetValue();
+                    }
+                    finally { TraverseHack.ApplyingFromNetwork = false; }
+                    break;
+                }
+            }
+        }
+
+        private void HandleExplosionSpawnObject(ExplosionSpawnObjectMessage msg)
+        {
+            if (string.IsNullOrEmpty(msg.PrefabName)) return;
+            Vector3 pos = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
+            Quaternion rot = Quaternion.Euler(msg.RotX, msg.RotY, msg.RotZ);
+            TraverseHack.ApplyingFromNetwork = true;
+            try
+            {
+                string[] prefixes = { "", "Items/", "FX/", "Environment/", "Particles/", "Dummies/", "Fire/", "Weapons/" };
+                UnityEngine.Object prefab = null;
+                string foundPath = null;
+                foreach (var prefix in prefixes)
+                {
+                    string path = "Prefabs/" + prefix + msg.PrefabName;
+                    prefab = Resources.Load(path);
+                    if (prefab != null)
+                    {
+                        foundPath = path;
+                        ModRuntime.Log?.LogInfo("[ExplosionSpawnRecv] found prefab at " + path);
+                        break;
+                    }
+                }
+                if (prefab != null)
+                {
+                    Core.AddPrefab(prefab, pos, rot, null, false);
+                    ModRuntime.Log?.LogInfo("[ExplosionSpawnRecv] spawned " + msg.PrefabName + " at " + pos + " rot=" + rot.eulerAngles + " (loaded from " + foundPath + ")");
+                }
+                else
+                {
+                    ModRuntime.Log?.LogWarning("[ExplosionSpawnRecv] prefab=" + msg.PrefabName + " NOT FOUND in any prefix at " + pos + " rot=" + rot.eulerAngles + " — falling back to Core.AddPrefab(string)");
+                    Core.AddPrefab(msg.PrefabName, pos, rot, null, false);
+                }
+            }
+            finally { TraverseHack.ApplyingFromNetwork = false; }
         }
 
         private void HandlePlayerAnimation(PlayerAnimationMessage msg)
@@ -1921,7 +2250,7 @@ namespace DarkwoodMultiplayer.Networking
             try
             {
                 HarmonyLib.Traverse.Create(anim).Property("Library").SetValue(lib);
-                ModRuntime.Log?.LogInfo("[AnimLib] applied library: " + msg.LibraryName);
+                ModRuntime.Log?.LogDebug("[AnimLib] applied library: " + msg.LibraryName);
             }
             catch (System.Exception ex)
             {

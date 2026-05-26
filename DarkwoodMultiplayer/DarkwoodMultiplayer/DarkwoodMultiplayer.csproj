@@ -57,6 +57,10 @@
           <HintPath>..\packages\LiteNetLib.1.2.0\lib\net471\LiteNetLib.dll</HintPath>
           <Private>True</Private>
         </Reference>
+        <Reference Include="Newtonsoft.Json">
+          <HintPath>..\..\..\Program Files (x86)\Steam\steamapps\common\Darkwood\Darkwood_Data\Managed\Newtonsoft.Json.dll</HintPath>
+          <Private>False</Private>
+        </Reference>
         <Reference Include="System"/>
         <Reference Include="System.Core"/>
         <Reference Include="System.Data"/>
@@ -97,6 +101,7 @@
         <Compile Include="Networking\NetMessages.cs"/>
         <Compile Include="Networking\NetworkRole.cs"/>
         <Compile Include="Networking\ClientSaveBridge.cs"/>
+        <Compile Include="Networking\ClientStateBackup.cs"/>
         <Compile Include="Networking\WorldSyncService.cs"/>
         <Compile Include="Networking\PlayerPositionManager.cs"/>
         <Compile Include="Networking\EntityStateBroadcastService.cs"/>
@@ -115,6 +120,7 @@
         <Compile Include="Players\DroppedItemIdentifier.cs"/>
         <Compile Include="Patches\PlayerCoopPatches.cs"/>
         <Compile Include="UI\MultiplayerMenu.cs"/>
+        <Compile Include="UI\SpectatorModeController.cs"/>
         <Compile Include="Patches\InputScriptPatches.cs"/>
         <Compile Include="Patches\PlayerUpdatePatch.cs"/>
         <Compile Include="Patches\PlayerInventoryPatches.cs"/>
@@ -150,6 +156,14 @@
         <Compile Include="Patches\BulletFXSyncPatch.cs"/>
         <Compile Include="Patches\WeaponFireSyncPatch.cs"/>
         <Compile Include="Patches\DroppedItemSyncPatches.cs"/>
+        <Compile Include="Patches\ShadowSyncPatches.cs"/>
+        <Compile Include="Patches\NightSpawnRedirectPatches.cs"/>
+        <Compile Include="Patches\ScenarioSyncPatches.cs"/>
+        <Compile Include="Patches\ScenarioRandomEventSyncPatches.cs"/>
+        <Compile Include="Patches\ItemDoublePickupPatch.cs"/>
+        <Compile Include="Patches\ClientHitscanDamageRedirectPatch.cs"/>
+        <Compile Include="Patches\FireSyncPatches.cs"/>
+        <Compile Include="Patches\ExplosionSpawnSyncPatches.cs"/>
     </ItemGroup>
     <ItemGroup>
       <None Include="App.config" />
@@ -161,6 +175,7 @@
         <Compile Include="Sync\CharacterTracker.cs"/>
         <Compile Include="Sync\EntityTrackers.cs"/>
         <Compile Include="Sync\PrefabPathComponent.cs"/>
+        <Compile Include="Sync\PushableEntity.cs"/>
         <Compile Include="DebugTools\EntitySpawnerUI.cs"/>
     </ItemGroup>
     <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets"/>

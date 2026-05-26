@@ -30,7 +30,7 @@ namespace DarkwoodMultiplayer.Patches
                 LibraryName = libName
             });
 
-            ModRuntime.Log?.LogInfo("[AnimLib] sent library: " + libName);
+            ModRuntime.Log?.LogDebug("[AnimLib] sent library: " + libName);
         }
     }
 }

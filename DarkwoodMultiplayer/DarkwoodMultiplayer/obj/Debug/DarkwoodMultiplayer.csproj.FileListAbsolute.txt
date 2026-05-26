@@ -22,3 +22,15 @@ C:\DarkwoodMod\DarkwoodMultiplayer\DarkwoodMultiplayer\obj\Debug\DarkwoodMultipl
 C:\DarkwoodMod\DarkwoodMultiplayer\DarkwoodMultiplayer\obj\Debug\Darkwood.2C2E47EE.Up2Date
 C:\DarkwoodMod\DarkwoodMultiplayer\DarkwoodMultiplayer\obj\Debug\DarkwoodMultiplayer.dll
 C:\DarkwoodMod\DarkwoodMultiplayer\DarkwoodMultiplayer\obj\Debug\DarkwoodMultiplayer.pdb
+C:\DarkwoodMod\DarkwoodMultiplayer\DarkwoodMultiplayer\bin\Debug\System.Data.Common.dll
+C:\DarkwoodMod\DarkwoodMultiplayer\DarkwoodMultiplayer\bin\Debug\System.Diagnostics.StackTrace.dll
+C:\DarkwoodMod\DarkwoodMultiplayer\DarkwoodMultiplayer\bin\Debug\System.Diagnostics.Tracing.dll
+C:\DarkwoodMod\DarkwoodMultiplayer\DarkwoodMultiplayer\bin\Debug\System.Globalization.Extensions.dll
+C:\DarkwoodMod\DarkwoodMultiplayer\DarkwoodMultiplayer\bin\Debug\System.IO.Compression.dll
+C:\DarkwoodMod\DarkwoodMultiplayer\DarkwoodMultiplayer\bin\Debug\System.Net.Http.dll
+C:\DarkwoodMod\DarkwoodMultiplayer\DarkwoodMultiplayer\bin\Debug\System.Net.Sockets.dll
+C:\DarkwoodMod\DarkwoodMultiplayer\DarkwoodMultiplayer\bin\Debug\System.Runtime.Serialization.Primitives.dll
+C:\DarkwoodMod\DarkwoodMultiplayer\DarkwoodMultiplayer\bin\Debug\System.Security.Cryptography.Algorithms.dll
+C:\DarkwoodMod\DarkwoodMultiplayer\DarkwoodMultiplayer\bin\Debug\System.Security.SecureString.dll
+C:\DarkwoodMod\DarkwoodMultiplayer\DarkwoodMultiplayer\bin\Debug\System.Threading.Overlapped.dll
+C:\DarkwoodMod\DarkwoodMultiplayer\DarkwoodMultiplayer\bin\Debug\System.Xml.XPath.XDocument.dll

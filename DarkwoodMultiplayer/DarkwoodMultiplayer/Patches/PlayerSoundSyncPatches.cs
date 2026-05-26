@@ -22,6 +22,9 @@ namespace DarkwoodMultiplayer.Patches
             if (audioID.IndexOf("player_low_health", System.StringComparison.OrdinalIgnoreCase) >= 0) return;
             if (audioID.IndexOf("player_tired", System.StringComparison.OrdinalIgnoreCase) >= 0) return;
 
+            // Skip UI/inventory sounds — host inventory actions should not be audible on the client
+            if (audioID.StartsWith("UI_", System.StringComparison.OrdinalIgnoreCase)) return;
+
             net.SendPlayerAudio(new PlayerAudioMessage
             {
                 SoundId = audioID,
@@ -142,6 +145,51 @@ namespace DarkwoodMultiplayer.Patches
             }
 
             PlayerAudioHelper.ForwardSound(audioID, 1f, pos);
+        }
+    }
+
+    /// <summary>Play open_drawer when the player opens their own inventory (animation
+    /// may not trigger this sound, and Item.openInventory() only fires for containers).
+    /// AudioPlayStrTrans catches the Play(string, Transform) call and forwards it
+    /// with the player's world position to the remote peer.</summary>
+    [HarmonyPatch(typeof(Player), "openInventory")]
+    public static class PlayerOpenInventorySoundPatch
+    {
+        [HarmonyPostfix]
+        private static void Postfix(Player __instance)
+        {
+            if (TraverseHack.ApplyingFromNetwork) return;
+            if (__instance == null) return;
+            AudioController.Play("open_drawer", __instance._transform);
+        }
+    }
+
+    /// <summary>Play(string audioID) — used by molotov lighting sound (aimSound).</summary>
+    [HarmonyPatch(typeof(AudioController), "Play", typeof(string))]
+    public static class AudioPlayStrOnly
+    {
+        [HarmonyPrefix]
+        private static void Prefix(string audioID)
+        {
+            var net = ModRuntime.Network;
+            if (net == null || net.Role == NetworkRole.Offline) return;
+            if (TraverseHack.ApplyingFromNetwork) return;
+            // Skip forwarded-by-position sounds — they already carry a world position.
+            if (audioID.IndexOf("foot", System.StringComparison.OrdinalIgnoreCase) >= 0) return;
+            if (audioID.IndexOf("walk_clothes", System.StringComparison.OrdinalIgnoreCase) >= 0) return;
+            // Skip UI/inventory sounds — host inventory actions should not be audible on the client
+            if (audioID.StartsWith("UI_", System.StringComparison.OrdinalIgnoreCase)) return;
+
+            // Send NaN position so HandlePlayerAudio falls back to the remote proxy
+            // transform, giving the correct spatial location of the player who played
+            // this non-positional sound. Using ForwardSound would bake in the local
+            // player's position, making the sound seem to come from the wrong place.
+            net.SendPlayerAudio(new PlayerAudioMessage
+            {
+                SoundId = audioID,
+                Volume = 1f,
+                PosX = float.NaN, PosY = float.NaN, PosZ = float.NaN
+            });
         }
     }
 }

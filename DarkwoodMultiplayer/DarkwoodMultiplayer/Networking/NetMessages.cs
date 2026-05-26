@@ -76,7 +76,25 @@ namespace DarkwoodMultiplayer.Networking
         /// <summary>Either peer: a networked dropped item was picked up.</summary>
         DroppedItemPickup = 35,
         /// <summary>Either peer: saw fuel/inventory state changed (convert or add fuel).</summary>
-        SawState = 36
+        SawState = 36,
+        /// <summary>Host→Client: NightShadows skill activated; triggers client-side shadow spawns.</summary>
+        ShadowEvent = 37,
+        /// <summary>Host→Client: an individual shadow was spawned at a specific world position.</summary>
+        ShadowSpawn = 38,
+        /// <summary>Host→Client: active night scenario name for client-side custom events.</summary>
+        ScenarioSync = 39,
+        /// <summary>Host→Client: the chosen custom event index for frequency-based random picks.</summary>
+        ScenarioEventFired = 40,
+        /// <summary>Host→Client: an entity started or stopped burning (for visual sync).</summary>
+        EntityBurning = 41,
+        /// <summary>Either peer: a Liquid (gasoline puddle) stopped burning.</summary>
+        LiquidStopBurning = 42,
+        /// <summary>Host→Client: an object spawned by Explodes.spawnObjects() at a specific position.</summary>
+        ExplosionSpawnObject = 43,
+        /// <summary>Either peer: the local player started or stopped burning (for proxy visual sync).</summary>
+        PlayerBurning = 44,
+        /// <summary>Client→Host: client's inventory/skills/state backup sent on save.</summary>
+        ClientStateBackup = 45
     }
 
     /// <summary>
@@ -681,6 +699,8 @@ namespace DarkwoodMultiplayer.Networking
         public float Durability;
         /// <summary>Item ammo count (for ranged weapons).</summary>
         public int Ammo;
+        /// <summary>True if a player placed this item (for anti-dupe tracking).</summary>
+        public bool IsPlayerPlaced;
 
         /// <summary>Serializes this message into the provided writer.</summary>
         public void Serialize(NetWriter w)
@@ -692,6 +712,7 @@ namespace DarkwoodMultiplayer.Networking
             w.Put(Amount);
             w.Put(Durability);
             w.Put(Ammo);
+            w.Put(IsPlayerPlaced);
         }
 
         /// <summary>Deserializes a ContainerItemMessage from the provided reader.</summary>
@@ -703,7 +724,8 @@ namespace DarkwoodMultiplayer.Networking
             ItemType = r.GetString(),
             Amount = r.GetInt(),
             Durability = r.GetFloat(),
-            Ammo = r.GetInt()
+            Ammo = r.GetInt(),
+            IsPlayerPlaced = r.GetBool()
         };
     }
 
@@ -1118,6 +1140,8 @@ namespace DarkwoodMultiplayer.Networking
         public float PosX, PosY, PosZ;
         public float AimY;
         public float Distance;
+        /// <summary>Random spread angle from throwItem()'s Random.Range(-5f, 5f), so the host's duplicate uses the exact same angle.</summary>
+        public float Spread;
 
         public void Serialize(NetWriter w)
         {
@@ -1125,6 +1149,7 @@ namespace DarkwoodMultiplayer.Networking
             w.Put(PosX); w.Put(PosY); w.Put(PosZ);
             w.Put(AimY);
             w.Put(Distance);
+            w.Put(Spread);
         }
 
         public static ThrowableSpawnMessage Deserialize(NetReader r) => new ThrowableSpawnMessage
@@ -1132,7 +1157,8 @@ namespace DarkwoodMultiplayer.Networking
             ItemType = r.GetString(),
             PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat(),
             AimY = r.GetFloat(),
-            Distance = r.GetFloat()
+            Distance = r.GetFloat(),
+            Spread = r.GetFloat()
         };
     }
 
@@ -1372,6 +1398,175 @@ namespace DarkwoodMultiplayer.Networking
             Fuel = r.GetFloat(),
             WoodLogAmount = r.GetInt(),
             WoodAmount = r.GetInt()
+        };
+    }
+
+    /// <summary>Host→Client: trigger client-side NightShadows skill activation (setup flags only).</summary>
+    public struct ShadowEventMessage
+    {
+        public void Serialize(NetWriter w) { }
+        public static ShadowEventMessage Deserialize(NetReader r) => new ShadowEventMessage();
+    }
+
+    /// <summary>Host→Client: a single shadow spawned at a specific world position on the host.</summary>
+    public struct ShadowSpawnMessage
+    {
+        public float PosX, PosY, PosZ;
+        public float RotY;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(PosX); w.Put(PosY); w.Put(PosZ);
+            w.Put(RotY);
+        }
+
+        public static ShadowSpawnMessage Deserialize(NetReader r) => new ShadowSpawnMessage
+        {
+            PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat(),
+            RotY = r.GetFloat()
+        };
+    }
+
+    /// <summary>Host→Client: current night scenario name so client can run CustomEvent effects locally.</summary>
+    public struct ScenarioSyncMessage
+    {
+        /// <summary>Name of the NightScenario prefab (from Resources/NightScenarios/).</summary>
+        public string ScenarioName;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(ScenarioName ?? string.Empty);
+        }
+
+        public static ScenarioSyncMessage Deserialize(NetReader r) => new ScenarioSyncMessage
+        {
+            ScenarioName = r.GetString()
+        };
+    }
+
+    public struct ScenarioEventFiredMessage
+    {
+        /// <summary>NightScenario.nightId identifying which scenario fired the event.</summary>
+        public int NightId;
+        /// <summary>Index into customEventAndInts of the chosen event.</summary>
+        public int EventIndex;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(NightId);
+            w.Put(EventIndex);
+        }
+
+        public static ScenarioEventFiredMessage Deserialize(NetReader r) => new ScenarioEventFiredMessage
+        {
+            NightId = r.GetInt(),
+            EventIndex = r.GetInt()
+        };
+    }
+
+    /// <summary>Host→Client: an entity started or stopped burning (for visual sync).</summary>
+    public struct EntityBurningMessage
+    {
+        /// <summary>Stable ID of the entity.</summary>
+        public short EntityId;
+        /// <summary>True to start burning, false to stop.</summary>
+        public bool IsBurning;
+        /// <summary>Burn duration in seconds.</summary>
+        public float BurnTime;
+        /// <summary>Damage per tick.</summary>
+        public float Modifier;
+        /// <summary>Seconds between damage ticks.</summary>
+        public float Interval;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(EntityId);
+            w.Put(IsBurning);
+            w.Put(BurnTime);
+            w.Put(Modifier);
+            w.Put(Interval);
+        }
+
+        public static EntityBurningMessage Deserialize(NetReader r) => new EntityBurningMessage
+        {
+            EntityId = r.GetShort(),
+            IsBurning = r.GetBool(),
+            BurnTime = r.GetFloat(),
+            Modifier = r.GetFloat(),
+            Interval = r.GetFloat()
+        };
+    }
+
+    /// <summary>Either peer: a Liquid (gasoline puddle) stopped burning.</summary>
+    public struct LiquidStopBurningMessage
+    {
+        public float PosX, PosY, PosZ;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(PosX); w.Put(PosY); w.Put(PosZ);
+        }
+
+        public static LiquidStopBurningMessage Deserialize(NetReader r) => new LiquidStopBurningMessage
+        {
+            PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat()
+        };
+    }
+
+    /// <summary>Host→Client: an object spawned by Explodes.spawnObjects() at a specific position.</summary>
+    public struct ExplosionSpawnObjectMessage
+    {
+        public string PrefabName;
+        public float PosX, PosY, PosZ;
+        public float RotX, RotY, RotZ;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(PrefabName ?? string.Empty);
+            w.Put(PosX); w.Put(PosY); w.Put(PosZ);
+            w.Put(RotX); w.Put(RotY); w.Put(RotZ);
+        }
+
+        public static ExplosionSpawnObjectMessage Deserialize(NetReader r) => new ExplosionSpawnObjectMessage
+        {
+            PrefabName = r.GetString(),
+            PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat(),
+            RotX = r.GetFloat(), RotY = r.GetFloat(), RotZ = r.GetFloat()
+        };
+    }
+
+    /// <summary>Either peer: the remote player proxy started or stopped burning.</summary>
+    public struct PlayerBurningMessage
+    {
+        public bool IsBurning;
+        public float BurnTime;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(IsBurning);
+            w.Put(BurnTime);
+        }
+
+        public static PlayerBurningMessage Deserialize(NetReader r) => new PlayerBurningMessage
+        {
+            IsBurning = r.GetBool(),
+            BurnTime = r.GetFloat()
+        };
+    }
+
+    /// <summary>Client→Host: client's inventory/skills/player-state backup data (JSON).</summary>
+    public struct ClientStateBackupMessage
+    {
+        public string JsonData;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(JsonData ?? string.Empty);
+        }
+
+        public static ClientStateBackupMessage Deserialize(NetReader r) => new ClientStateBackupMessage
+        {
+            JsonData = r.GetString()
         };
     }
 }

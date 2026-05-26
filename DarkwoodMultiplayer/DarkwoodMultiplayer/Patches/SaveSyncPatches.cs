@@ -16,6 +16,11 @@ namespace DarkwoodMultiplayer.Patches
                 return;
             if (ModRuntime.Network == null || !ModRuntime.Network.IsConnected)
                 return;
+
+            // Client sends inventory/skills/state backup to host on local save
+            if (ModRuntime.Network.Role == NetworkRole.Client)
+                ModRuntime.Network.SendClientStateBackup();
+
             ModRuntime.Network.SendSaveSync();
         }
     }

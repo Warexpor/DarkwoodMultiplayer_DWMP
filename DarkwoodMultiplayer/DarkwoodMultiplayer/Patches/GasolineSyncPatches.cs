@@ -43,8 +43,15 @@ namespace DarkwoodMultiplayer.Patches
     [HarmonyPatch(typeof(Liquid), "startBurning")]
     public static class GasIgnitePatch
     {
-        private static void Postfix(Liquid __instance)
+        [HarmonyPrefix]
+        private static void Prefix(Liquid __instance, out bool __state)
         {
+            __state = __instance.burning;
+        }
+
+        private static void Postfix(Liquid __instance, bool __state)
+        {
+            if (__state) return;
             var net = ModRuntime.Network;
             if (net == null || net.Role == NetworkRole.Offline) return;
             if (TraverseHack.ApplyingFromNetwork) return;

@@ -819,31 +819,35 @@ namespace DarkwoodMultiplayer.Sync
 
             if (triggered)
             {
+                bool isHarvestable = go.name.ToLowerInvariant().Contains("mushroom");
                 Trigger trig = go.GetComponent<Trigger>();
 
-                // Play activation sound
-                if (trig != null && !string.IsNullOrEmpty(trig.activateSound))
-                    AudioController.Play(trig.activateSound, go.transform);
-
-                // Spawn explosion visual prefab (blood splatter, etc.) at ground level.
-                // Dropped items have Y=-10.4 (below terrain), so raycast to find ground.
-                if (trig != null && trig.prefabToSpawn != null)
+                if (!isHarvestable)
                 {
-                    Vector3 spawnPos = go.transform.position + new Vector3(0f, 1f, 0f);
-                    // Bump underground traps up to ground level
-                    if (spawnPos.y < 0f)
+                    // Play activation sound
+                    if (trig != null && !string.IsNullOrEmpty(trig.activateSound))
+                        AudioController.Play(trig.activateSound, go.transform);
+
+                    // Spawn explosion visual prefab (blood splatter, etc.) at ground level.
+                    // Dropped items have Y=-10.4 (below terrain), so raycast to find ground.
+                    if (trig != null && trig.prefabToSpawn != null)
                     {
-                        RaycastHit hit;
-                        if (Physics.Raycast(spawnPos + Vector3.up * 50f, Vector3.down, out hit, 100f))
-                            spawnPos.y = hit.point.y + 0.5f;
-                    }
-                    try
-                    {
-                        Core.AddPrefab(trig.prefabToSpawn, spawnPos, Quaternion.Euler(90f, 0f, 0f), null);
-                    }
-                    catch
-                    {
-                        UnityEngine.Object.Instantiate(trig.prefabToSpawn, spawnPos, Quaternion.Euler(90f, 0f, 0f));
+                        Vector3 spawnPos = go.transform.position + new Vector3(0f, 1f, 0f);
+                        // Bump underground traps up to ground level
+                        if (spawnPos.y < 0f)
+                        {
+                            RaycastHit hit;
+                            if (Physics.Raycast(spawnPos + Vector3.up * 50f, Vector3.down, out hit, 100f))
+                                spawnPos.y = hit.point.y + 0.5f;
+                        }
+                        try
+                        {
+                            Core.AddPrefab(trig.prefabToSpawn, spawnPos, Quaternion.Euler(90f, 0f, 0f), null);
+                        }
+                        catch
+                        {
+                            UnityEngine.Object.Instantiate(trig.prefabToSpawn, spawnPos, Quaternion.Euler(90f, 0f, 0f));
+                        }
                     }
                 }
 
@@ -1204,7 +1208,7 @@ namespace DarkwoodMultiplayer.Sync
             GameObject prefab = itemDef.item as GameObject;
             if (prefab == null) return;
 
-            Vector3 spawnPos = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
+            Vector3 spawnPos = new Vector3(msg.PosX, msg.PosY + 1.0f, msg.PosZ);
             GameObject go = Core.AddPrefab(prefab, spawnPos, Quaternion.Euler(90f, msg.AimY, 0f), null);
             if (go == null)
                 go = UnityEngine.Object.Instantiate(prefab, spawnPos, Quaternion.Euler(90f, msg.AimY, 0f));
@@ -1215,29 +1219,52 @@ namespace DarkwoodMultiplayer.Sync
                 return;
             }
 
+            // Prevent the freshly instantiated item from immediately colliding with the proxy
+            // (which has active colliders via RemotePlayerProxy.EnableCollision).
+            // Without this, Molotov's fireOnCollideOnAnyCollision would trigger onCollide
+            // on the next physics step, causing an explosion at the spawn position.
+            if (proxyT != null)
+            {
+                Collider[] itemCols = go.GetComponentsInChildren<Collider>(true);
+                Collider[] proxyCols = proxyT.GetComponentsInChildren<Collider>(true);
+                if (itemCols.Length > 0 && proxyCols.Length > 0)
+                {
+                    foreach (var ic in itemCols)
+                        foreach (var pc in proxyCols)
+                            Physics.IgnoreCollision(ic, pc);
+                }
+            }
+
             Rigidbody rb = go.GetComponent<Rigidbody>();
+            ThrownItem ti = go.GetComponent<ThrownItem>();
+            float distance = Mathf.Clamp(msg.Distance, 10f, 370f);
+            float spread = msg.Spread;
+            Vector3 dir = Quaternion.Euler(0f, msg.AimY + spread, 0f) * Vector3.forward;
+
             if (rb != null)
             {
                 rb.isKinematic = false;
-                float distance = Mathf.Clamp(msg.Distance, 10f, 370f);
-                Vector3 dir = Quaternion.Euler(0f, msg.AimY, 0f) * Vector3.up;
+                rb.drag = 2f;
                 float speed = 2.5f;
-                ThrownItem thrownItem = go.GetComponent<ThrownItem>();
-                float initialV = thrownItem != null ? thrownItem.initialVelocity : 0f;
+                float initialV = ti != null ? ti.initialVelocity : 0f;
                 if (initialV == 0f)
                     rb.velocity = dir * distance * speed;
                 else
                     rb.velocity = dir * initialV;
+
+                float rotForce = ti != null ? ti.initialRotationForce : 225f;
+                if (rotForce == 0f)
+                    rb.angularVelocity = Vector3.zero;
+                else
+                    rb.AddTorque(0f, rotForce * 1000f, 0f);
             }
 
-            ThrownItem ti = go.GetComponent<ThrownItem>();
             if (ti != null)
             {
                 ti.thrown = true;
                 ti.objectThatSpawnedMe = proxyT;
-                float dist = Mathf.Clamp(msg.Distance, 10f, 370f);
-                ti.landTarget = proxyT.position + Quaternion.Euler(0f, msg.AimY, 0f) * Vector3.up * dist;
-                ti.setFallSpeed(dist);
+                ti.landTarget = proxyT.position + dir * distance;
+                ti.setFallSpeed(distance);
             }
 
             Explodes expl = go.GetComponent<Explodes>();
@@ -1261,7 +1288,7 @@ namespace DarkwoodMultiplayer.Sync
             }
 
             Core.addToSaveable(go, isDynamic: true);
-            ModRuntime.Log?.LogInfo("[ThrowableSpawn] spawned " + msg.ItemType + " at " + spawnPos + " aimY=" + msg.AimY + " dist=" + msg.Distance);
+            ModRuntime.Log?.LogInfo("[ThrowableSpawn] spawned " + msg.ItemType + " at " + spawnPos + " aimY=" + msg.AimY + " spread=" + spread + " dist=" + msg.Distance);
         }
 
         public static void TriggerExplosion(Vector3 pos, string objectName, bool flaming = false)
@@ -1433,7 +1460,24 @@ namespace DarkwoodMultiplayer.Sync
                         return;
                     }
                 }
-                ModRuntime.Log?.LogWarning("[GasIgnite] no flammable Liquid found at " + pos);
+
+                // Trail not found — likely because ExplosionObjectSpawnSyncPatch uses
+                // prefab.name="Gasoline" which loads the wrong prefab. Spawn the correct
+                // trail at the reported position, then ignite it.
+                SpawnGasTrail(pos);
+                nearby = Physics.OverlapSphere(pos, 2f);
+                for (int i = 0; i < nearby.Length; i++)
+                {
+                    if (nearby[i] == null) continue;
+                    Liquid liquid = nearby[i].GetComponent<Liquid>();
+                    if (liquid != null && liquid.flammable && !liquid.burning)
+                    {
+                        liquid.startBurning();
+                        ModRuntime.Log?.LogInfo("[GasIgnite] spawned+ignited trail at " + pos);
+                        return;
+                    }
+                }
+                ModRuntime.Log?.LogWarning("[GasIgnite] no flammable Liquid found at " + pos + " (even after spawning)");
             }
             finally { TraverseHack.ApplyingFromNetwork = false; }
         }
@@ -1660,6 +1704,13 @@ namespace DarkwoodMultiplayer.Sync
         /// AudioController.Play call that happens inside these methods.
         /// </summary>
         public static bool InsideCharacterSounds = false;
+
+        /// <summary>
+        /// Set true on client during a local Explodes.explode() call so
+        /// ClientDamageRedirectPatch can redirect AOE splash damage to the host
+        /// (the host re-enacts the explosion and applies damage authoritatively).
+        /// </summary>
+        public static bool IsInsideLocalExplosion = false;
 
         /// <summary>Reads the private "opened" field from a Door instance.</summary>
         /// <param name="door">The door instance.</param>

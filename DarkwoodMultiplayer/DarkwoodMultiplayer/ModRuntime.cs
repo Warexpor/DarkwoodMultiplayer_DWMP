@@ -70,6 +70,7 @@ namespace DarkwoodMultiplayer
             root.AddComponent<EntitySpawnerUI>();
 
             MultiplayerMenu.EnsureExists();
+            Spectator.SpectatorModeController.EnsureExists();
         }
 
         /// <summary>Stop the network and unpatch Harmony (called on mod unload).</summary>

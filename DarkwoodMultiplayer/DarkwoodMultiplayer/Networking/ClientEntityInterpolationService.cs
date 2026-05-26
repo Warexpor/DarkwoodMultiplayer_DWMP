@@ -490,7 +490,11 @@ namespace DarkwoodMultiplayer.Networking
                     _displayRotations[id] = Mathf.LerpAngle(state.previousRotY, state.targetRotY, smoothT);
                 }
 
-                tracked.transform.position = _displayPositions[id];
+                Rigidbody rbPos = tracked.GetComponent<Rigidbody>();
+                if (rbPos != null)
+                    rbPos.MovePosition(_displayPositions[id]);
+                else
+                    tracked.transform.position = _displayPositions[id];
                 Vector3 rot = tracked.transform.eulerAngles;
                 rot.y = _displayRotations[id];
                 tracked.transform.eulerAngles = rot;
@@ -532,9 +536,8 @@ namespace DarkwoodMultiplayer.Networking
                     sprite.color = new Color(col.r, col.g, col.b, 1f);
             }
 
-            Rigidbody rb = c.GetComponent<Rigidbody>();
-            if (rb != null && !rb.isKinematic)
-                rb.isKinematic = true;
+            // Rigidbody left non-kinematic so the client player can push entities via physics.
+            // Host snapshots drive position via Rigidbody.MovePosition, which respects collisions.
         }
 
         private static Character SpawnEntityLocally(string entityName, string prefabPath, Vector3 position, float rotY)

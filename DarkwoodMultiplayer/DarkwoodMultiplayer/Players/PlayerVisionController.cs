@@ -109,6 +109,7 @@ namespace DarkwoodMultiplayer.Players
 
         /// <summary>
         /// Refreshes the main player's FOV angles then copies them to this controller's lights.
+        /// Use this for one-time syncs (e.g. on enter spectate).
         /// </summary>
         public void SyncFovConeFrom(Player main)
         {
@@ -116,6 +117,21 @@ namespace DarkwoodMultiplayer.Players
                 return;
 
             RefreshMainFov(main);
+            CopyLightCone(_fovLogic, main.FOVLogic);
+            CopyLightCone(_fovLight, FindLight(main.transform, "PlayerFOVLight"));
+            CopyLightCone(_fovDot, main.FOVDot);
+            CopyLightCone(_lightDot, FindLight(main.transform, "PlayerLightDot"));
+        }
+
+        /// <summary>
+        /// Copies current FOV values from the main player WITHOUT calling RefreshMainFov.
+        /// Use this for per-frame syncs — the Player's own Update already runs getFOVAngle().
+        /// </summary>
+        public void CopyFovValuesFrom(Player main)
+        {
+            if (main == null)
+                return;
+
             CopyLightCone(_fovLogic, main.FOVLogic);
             CopyLightCone(_fovLight, FindLight(main.transform, "PlayerFOVLight"));
             CopyLightCone(_fovDot, main.FOVDot);

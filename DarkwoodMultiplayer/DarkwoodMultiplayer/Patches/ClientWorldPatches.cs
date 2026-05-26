@@ -53,21 +53,4 @@ namespace DarkwoodMultiplayer.Patches
         }
     }
 
-    [HarmonyPatch(typeof(NightScenarios), "setCurrentScenario")]
-    public static class ClientDisableScenarioSelectPatch
-    {
-        private static bool Prefix()
-        {
-            return !ClientWorldHelper.IsClient;
-        }
-    }
-
-    [HarmonyPatch(typeof(NightScenarios), "Start")]
-    public static class ClientDisableScenarioStartPatch
-    {
-        private static bool Prefix()
-        {
-            return !ClientWorldHelper.IsClient;
-        }
-    }
 }

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using DarkwoodMultiplayer.Sync;
 using UnityEngine;
 
 namespace DarkwoodMultiplayer.DebugTools
@@ -138,7 +139,10 @@ namespace DarkwoodMultiplayer.DebugTools
 
                 GameObject go = Core.AddPrefab(prefabPath, pos, UnityEngine.Random.rotation, null);
                 if (go != null)
+                {
+                    go.AddComponent<PushableEntity>();
                     ModRuntime.Log?.LogInfo("[EntitySpawner] spawned " + prefabPath + " at " + pos);
+                }
             }
         }
     }
