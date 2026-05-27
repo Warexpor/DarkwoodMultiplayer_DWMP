@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
+using DarkwoodMultiplayer;
 using DarkwoodMultiplayer.Audio;
 using DarkwoodMultiplayer.Patches;
 using DarkwoodMultiplayer.Players;
@@ -52,6 +53,7 @@ namespace DarkwoodMultiplayer.Networking
         {
             Instance = this;
             _worldSync = new WorldSyncService(ModRuntime.Log);
+            Sync.DreamAudioPlayer.Initialize();
         }
 
         public void StartHost(int port)
@@ -83,6 +85,8 @@ namespace DarkwoodMultiplayer.Networking
 
         public void StopNetwork()
         {
+            Sync.DialogFreezeManager.OnMorningEnded();
+            Sync.DreamSyncManager.OnDisconnected();
             DestroyRemoteProxy();
             _handshakeComplete = false;
             _peer = null;
@@ -148,6 +152,13 @@ namespace DarkwoodMultiplayer.Networking
 
             _sendTimer = 0f;
             Vector3 pos = local.transform.position;
+
+            // When spectating, report original (saved) position to network so the remote
+            // doesn't see the host's proxy teleport into the client and cause body-pushing
+            var netPosOverride = Spectator.SpectatorModeController.Instance?.NetworkPositionOverride;
+            if (netPosOverride.HasValue)
+                pos = netPosOverride.Value;
+
             Vector3 vel = (pos - _lastSentPosition) / SendInterval;
             _lastSentPosition = pos;
 
@@ -439,7 +450,13 @@ namespace DarkwoodMultiplayer.Networking
                     HandleDamagePlayer(DamagePlayerMessage.Deserialize(new NetReader(payload)));
                     break;
                 case NetMessageType.PlayerDied:
-                    HandlePlayerDied();
+                    HandlePlayerDied(PlayerDiedMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.DeathBagSpawn:
+                    HandleDeathBagSpawn(DeathBagSpawnMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.NightDeathState:
+                    HandleNightDeathState(NightDeathStateMessage.Deserialize(new NetReader(payload)));
                     break;
                 case NetMessageType.ContainerItem:
                     HandleContainerItem(ContainerItemMessage.Deserialize(new NetReader(payload)));
@@ -548,6 +565,45 @@ namespace DarkwoodMultiplayer.Networking
                     break;
                 case NetMessageType.PlayerBurning:
                     HandlePlayerBurning(PlayerBurningMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.FlagSync:
+                    HandleFlagSync(FlagSyncMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.TradeSync:
+                    HandleTradeSync(TradeSyncMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.HideoutDialogState:
+                    HandleHideoutDialogState(HideoutDialogStateMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.NPCDialogueSync:
+                    HandleNPCDialogueSync(NPCDialogueSyncMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.DialogJoinRequest:
+                    HandleDialogJoinRequest(DialogJoinRequestMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.DialogStateUpdate:
+                    HandleDialogStateUpdate(DialogStateUpdateMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.DialogChoice:
+                    HandleDialogChoice(DialogChoiceMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.DialogEnded:
+                    HandleDialogEnded(DialogEndedMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.DreamStarted:
+                    HandleDreamStarted(DreamStartedMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.DreamEnded:
+                    HandleDreamEnded(DreamEndedMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.DreamItemPickup:
+                    HandleDreamItemPickup(DreamItemPickupMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.DreamAudio:
+                    HandleDreamAudio(DreamAudioMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.FinalDreamsceneDeath:
+                    HandleFinalDreamsceneDeath(FinalDreamsceneDeathMessage.Deserialize(new NetReader(payload)));
                     break;
                 case NetMessageType.ClientStateBackup:
                     HandleClientStateBackup(ClientStateBackupMessage.Deserialize(new NetReader(payload)));
@@ -914,11 +970,13 @@ namespace DarkwoodMultiplayer.Networking
             local.getHit(msg.Damage, local.transform, msg.CanCutInHalf, byPlayer: false, canInterrupt: true, showRedScreen: msg.ShowRedScreen);
         }
 
-        private void HandlePlayerDied()
+        private void HandlePlayerDied(PlayerDiedMessage msg)
         {
-            if (_role != NetworkRole.Host) return;
-            ModRuntime.Log?.LogInfo("[Death] Client died — killing remote proxy + saving world");
+            Vector3 deathPos = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
+            bool isNight = msg.IsNight;
+            ModRuntime.Log?.LogInfo($"[Death] Remote player died at {deathPos}, isNight={isNight}");
 
+            // Kill remote proxy (host→client or client→host)
             if (_remoteProxy != null)
             {
                 CharBase cb = _remoteProxy.GetComponent<CharBase>();
@@ -927,13 +985,118 @@ namespace DarkwoodMultiplayer.Networking
                     cb.alive = false;
                     cb.Health = 0f;
                 }
-                // Disable colliders so host enemies lose interest in the proxy
                 foreach (Collider col in _remoteProxy.GetComponentsInChildren<Collider>(true))
                     col.enabled = false;
             }
 
-            if (Singleton<SaveManager>.Instance != null)
+            if (isNight)
+            {
+                DeathStateTracker.OnRemoteNightDeath(deathPos);
+
+                if (_role == NetworkRole.Host)
+                {
+                    if (DeathStateTracker.BothDeadAtNight)
+                    {
+                        ModRuntime.Log?.LogInfo("[Death] Both dead at night — host triggering morning");
+                        if (Singleton<Controller>.Instance != null)
+                            Singleton<Controller>.Instance.skipDay();
+                        if (Singleton<SaveManager>.Instance != null)
+                            Singleton<SaveManager>.Instance.Save(doJson: true);
+                        // Tell client to exit spectator (morning came)
+                        Send(NetMessageType.NightDeathState,
+                            w => new NightDeathStateMessage { IsDead = true, BothDeadTrigger = true }.Serialize(w),
+                            LiteNetLib.DeliveryMethod.ReliableOrdered);
+                        DeathStateTracker.Reset();
+                    }
+                    else
+                    {
+                        ModRuntime.Log?.LogInfo("[Death] Remote night death, host alive — suppressing save");
+                    }
+                }
+                else
+                {
+                    ModRuntime.Log?.LogInfo("[Death] Host died at night — client marking night death");
+                }
+                return;
+            }
+
+            DeathStateTracker.OnRemoteDayDeath();
+
+            if (_role == NetworkRole.Host && Singleton<SaveManager>.Instance != null)
                 Singleton<SaveManager>.Instance.Save(doJson: true);
+        }
+
+        private void HandleDeathBagSpawn(DeathBagSpawnMessage msg)
+        {
+            Vector3 pos = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
+            ModRuntime.Log?.LogInfo($"[Death] Spawning death bag at {pos}");
+
+            GameObject bagGO = Core.AddPrefab("Objects/_Unique/deathDrop",
+                Core.getYPos(pos, PosType.items2),
+                Quaternion.Euler(90f, 0f, 0f),
+                Core.ItemContainer);
+            if (bagGO == null)
+            {
+                ModRuntime.Log?.LogWarning("[Death] Failed to spawn death bag prefab");
+                return;
+            }
+
+            DeathDrop deathDrop = bagGO.GetComponent<DeathDrop>();
+            if (deathDrop != null)
+            {
+                deathDrop.expAmount = msg.ExpAmount;
+            }
+
+            Inventory bagInv = bagGO.GetComponent<Inventory>();
+            if (bagInv != null && msg.ItemCount > 0 && msg.ItemTypes != null)
+            {
+                bagInv.initSlots();
+                for (int i = 0; i < msg.ItemCount && i < msg.ItemTypes.Length; i++)
+                {
+                    if (!string.IsNullOrEmpty(msg.ItemTypes[i]))
+                    {
+                        bagInv.addSlot();
+                        InvSlot slot = bagInv.getNextFreeSlot();
+                        if (slot != null)
+                        {
+                            int amount = msg.ItemAmounts != null && i < msg.ItemAmounts.Length ? msg.ItemAmounts[i] : 1;
+                            InvItemClass item = slot.createItem(msg.ItemTypes[i], amount);
+                            if (item != null)
+                            {
+                                if (msg.ItemDurabilities != null && i < msg.ItemDurabilities.Length)
+                                    item.durability = msg.ItemDurabilities[i];
+                                if (msg.ItemAmmos != null && i < msg.ItemAmmos.Length && msg.ItemAmmos[i] > 0)
+                                    item.ammo = msg.ItemAmmos[i];
+                            }
+                        }
+                    }
+                }
+                bagInv.checkForActiveSwitches(force: true);
+            }
+
+            ModRuntime.Log?.LogInfo($"[Death] Death bag spawned with {msg.ItemCount} items");
+        }
+
+        private void HandleNightDeathState(NightDeathStateMessage msg)
+        {
+            if (msg.BothDeadTrigger)
+            {
+                // Host says both players are dead — advance to morning
+                ModRuntime.Log?.LogInfo("[Death] Both dead at night — exiting spectator for morning");
+
+                if (Spectator.SpectatorModeController.Instance != null)
+                {
+                    Spectator.SpectatorModeController.Instance.ExitAndRespawn();
+                }
+
+                DeathStateTracker.Reset();
+            }
+        }
+
+        private void HandleFinalDreamsceneDeath(FinalDreamsceneDeathMessage msg)
+        {
+            ModRuntime.Log?.LogInfo("[FinalDreamscene] Received remote death notification");
+            Sync.FinalDreamsceneManager.OnRemoteDeathInDream();
         }
 
         private void HandleContainerItem(ContainerItemMessage msg)
@@ -1652,6 +1815,124 @@ namespace DarkwoodMultiplayer.Networking
                 return;
             }
             ClientStateBackup.SaveBackupFile(msg.JsonData);
+        }
+
+        /// <summary>
+        /// Handles a flag sync from the host. Applies the flag change locally
+        /// so dialog progression and world state stay consistent.
+        /// </summary>
+        private void HandleFlagSync(FlagSyncMessage msg)
+        {
+            if (_role != NetworkRole.Client)
+            {
+                ModRuntime.Log?.LogWarning("[FlagSync] only client should receive flag syncs");
+                return;
+            }
+
+            if (string.IsNullOrEmpty(msg.Name))
+                return;
+
+            if (Singleton<Flags>.Instance == null)
+                return;
+
+            if (msg.IsInt)
+                Singleton<Flags>.Instance.setFlag(msg.Name, msg.IntValue);
+            else
+                Singleton<Flags>.Instance.setFlag(msg.Name, msg.BoolValue);
+
+            ModRuntime.Log?.LogInfo($"[FlagSync] applied flag '{msg.Name}' isInt={msg.IsInt} boolVal={msg.BoolValue} intVal={msg.IntValue}");
+        }
+
+        /// <summary>
+        /// Handles a trade sync from either peer. Removes the purchased items
+        /// from the local trader's inventory so the assortment stays shared.
+        /// </summary>
+        private void HandleTradeSync(TradeSyncMessage msg)
+        {
+            Patches.TradeSyncHandler.HandleTradeSync(msg);
+        }
+
+        /// <summary>
+        /// Handles a hideout dialog state change from the remote player.
+        /// Freezes or unfreezes the local world so both players' worlds
+        /// are frozen when either is in an NPC dialog during morning.
+        /// </summary>
+        private void HandleHideoutDialogState(HideoutDialogStateMessage msg)
+        {
+            Sync.DialogFreezeManager.OnRemoteDialogState(msg.InDialog);
+        }
+
+        /// <summary>
+        /// Handles NPC dialogue state sync from the host. Applies
+        /// alreadyShown/disabled/wantsToTalk states to the local NPC
+        /// so dialog progression stays in sync.
+        /// </summary>
+        private void HandleNPCDialogueSync(NPCDialogueSyncMessage msg)
+        {
+            Sync.NPCDialogueSyncHandler.HandleNPCDialogueSync(msg);
+        }
+
+        /// <summary>
+        /// Client→Host: handles a dialog join request from the client.
+        /// </summary>
+        private void HandleDialogJoinRequest(DialogJoinRequestMessage msg)
+        {
+            Sync.DialogSyncManager.HandleJoinRequest(msg);
+        }
+
+        /// <summary>
+        /// Host→Client: applies a dialog state update from the host.
+        /// </summary>
+        private void HandleDialogStateUpdate(DialogStateUpdateMessage msg)
+        {
+            Sync.DialogSyncManager.ApplyStateUpdate(msg);
+        }
+
+        /// <summary>
+        /// Client→Host: handles a dialog choice from the client.
+        /// </summary>
+        private void HandleDialogChoice(DialogChoiceMessage msg)
+        {
+            Sync.DialogSyncManager.HandleChoice(msg);
+        }
+
+        /// <summary>
+        /// Either peer: handles a dialog ended notification.
+        /// </summary>
+        private void HandleDialogEnded(DialogEndedMessage msg)
+        {
+            Sync.DialogSyncManager.HandleSessionEnded(msg);
+        }
+
+        private void HandleDreamStarted(DreamStartedMessage msg)
+        {
+            Vector3 locPos = new Vector3(msg.LocPosX, msg.LocPosY, msg.LocPosZ);
+            Sync.DreamSyncManager.OnRemoteDreamStarted(msg.PresetName, msg.IsEpilogue, locPos);
+        }
+
+        /// <summary>
+        /// Either peer: handles a dream ended notification.
+        /// Remote side unfreezes world and exits spectator mode.
+        /// </summary>
+        private void HandleDreamEnded(DreamEndedMessage msg)
+        {
+            Sync.DreamSyncManager.OnRemoteDreamEnded();
+        }
+
+        /// <summary>
+        /// Dreamer→Spectator: an item was picked up in a dream.
+        /// Logged for now; future enhancement should show a UI notification
+        /// on the spectator's screen.
+        /// </summary>
+        private void HandleDreamItemPickup(DreamItemPickupMessage msg)
+        {
+            if (string.IsNullOrEmpty(msg.ItemType)) return;
+            ModRuntime.Log?.LogInfo($"[DreamSync] Dreamer picked up: {msg.ItemType} x{msg.Amount} at ({msg.PosX:F1}, {msg.PosY:F1}, {msg.PosZ:F1})");
+        }
+
+        private void HandleDreamAudio(DreamAudioMessage msg)
+        {
+            Sync.DreamAudioPlayer.PlayForwardedAudio(msg);
         }
 
         private void SendWorldSnapshot()

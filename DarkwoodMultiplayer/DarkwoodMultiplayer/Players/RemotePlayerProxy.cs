@@ -12,6 +12,7 @@ namespace DarkwoodMultiplayer.Players
         private SecondPlayerAnimController _anim;
         private Transform _shadow;
         private Vector3 _targetPosition;
+        private float _targetRotationY;
         // Accumulated push force from local player collisions
         private Vector3 _pushOffset;
         private bool _hasState;
@@ -141,6 +142,7 @@ namespace DarkwoodMultiplayer.Players
         public void ApplyNetworkState(PlayerStateNet state)
         {
             _targetPosition = state.Position;
+            _targetRotationY = state.TorsoFacingY;
             _hasState = true;
             _anim?.ApplyNetworkSnapshot(
                 state.Locomotion, state.FlipX, state.LegFacingY,
@@ -306,6 +308,12 @@ namespace DarkwoodMultiplayer.Players
 
             // Decay push force gradually
             _pushOffset = Vector3.Lerp(_pushOffset, Vector3.zero, Time.fixedDeltaTime * 10f);
+
+            // Smoothly interpolate Y rotation to avoid cone/view jitter from low-rate network updates
+            float rotT = 18f * Time.fixedDeltaTime;
+            Vector3 euler = transform.eulerAngles;
+            euler.y = Mathf.LerpAngle(euler.y, _targetRotationY, rotT);
+            transform.eulerAngles = euler;
         }
 
         // Forces shadow to always point straight down for correct 2.5D appearance

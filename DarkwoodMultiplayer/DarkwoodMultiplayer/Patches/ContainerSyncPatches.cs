@@ -40,6 +40,22 @@ namespace DarkwoodMultiplayer.Patches
                 IsPlayerPlaced = isPlayerPlaced
             };
             LanNetworkManager.Instance.Send(NetMessageType.ContainerItem, w => msg.Serialize(w), DeliveryMethod.ReliableOrdered);
+
+            // If the local player is currently dreaming, also send DreamItemPickup
+            // so the spectator gets visual sync of dream item pickups.
+            if (Sync.DreamSyncManager.IsDreamActive && (action == ContainerAction.TakeItem || action == ContainerAction.RemoveItem))
+            {
+                LanNetworkManager.Instance.Send(NetMessageType.DreamItemPickup,
+                    w => new DreamItemPickupMessage
+                    {
+                        ItemType = itemType ?? "",
+                        Amount = amount,
+                        PosX = pos.x,
+                        PosY = pos.y,
+                        PosZ = pos.z
+                    }.Serialize(w),
+                    DeliveryMethod.ReliableOrdered);
+            }
         }
     }
 

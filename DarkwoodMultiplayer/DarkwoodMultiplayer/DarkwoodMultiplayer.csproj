@@ -96,6 +96,7 @@
         <Compile Include="Config\ModConfig.cs"/>
         <Compile Include="DarkwoodMultiplayerEntry.cs"/>
         <Compile Include="ModRuntime.cs"/>
+        <Compile Include="DeathStateTracker.cs"/>
         <Compile Include="PluginInfo.cs"/>
         <Compile Include="Networking\LanNetworkManager.cs"/>
         <Compile Include="Networking\NetMessages.cs"/>
@@ -120,6 +121,7 @@
         <Compile Include="Players\DroppedItemIdentifier.cs"/>
         <Compile Include="Patches\PlayerCoopPatches.cs"/>
         <Compile Include="UI\MultiplayerMenu.cs"/>
+        <Compile Include="UI\ManualSaveGUI.cs"/>
         <Compile Include="UI\SpectatorModeController.cs"/>
         <Compile Include="Patches\InputScriptPatches.cs"/>
         <Compile Include="Patches\PlayerUpdatePatch.cs"/>
@@ -164,6 +166,17 @@
         <Compile Include="Patches\ClientHitscanDamageRedirectPatch.cs"/>
         <Compile Include="Patches\FireSyncPatches.cs"/>
         <Compile Include="Patches\ExplosionSpawnSyncPatches.cs"/>
+        <Compile Include="Patches\DeathBagDropSyncPatch.cs"/>
+        <Compile Include="Patches\HostDeathSendPatch.cs"/>
+        <Compile Include="Patches\NightDeathPatches.cs"/>
+        <Compile Include="Patches\FlagSyncPatches.cs"/>
+        <Compile Include="Patches\TradeSyncPatches.cs"/>
+        <Compile Include="Patches\HideoutDialogSyncPatches.cs"/>
+        <Compile Include="Patches\MorningRepPatch.cs"/>
+        <Compile Include="Patches\DialogueStateSyncPatch.cs"/>
+        <Compile Include="Patches\DialogSyncPatches.cs"/>
+        <Compile Include="Patches\DreamSyncPatches.cs"/>
+        <Compile Include="Patches\SpectatorCullingPatch.cs"/>
     </ItemGroup>
     <ItemGroup>
       <None Include="App.config" />
@@ -176,6 +189,13 @@
         <Compile Include="Sync\EntityTrackers.cs"/>
         <Compile Include="Sync\PrefabPathComponent.cs"/>
         <Compile Include="Sync\PushableEntity.cs"/>
+        <Compile Include="Sync\DialogFreezeManager.cs"/>
+        <Compile Include="Sync\NPCDialogueSyncHandler.cs"/>
+        <Compile Include="Sync\DialogSyncManager.cs"/>
+        <Compile Include="Sync\DreamSyncManager.cs"/>
+        <Compile Include="Sync\DreamAudioPlayer.cs"/>
+        <Compile Include="Sync\FinalDreamsceneManager.cs"/>
+        <Compile Include="Patches\DreamAudioPatches.cs"/>
         <Compile Include="DebugTools\EntitySpawnerUI.cs"/>
     </ItemGroup>
     <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets"/>

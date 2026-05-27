@@ -11,6 +11,7 @@ namespace DarkwoodMultiplayer.DebugTools
         private string _filter = "";
         private string _filterPrev = "";
         private int _spawnCount = 1;
+        private bool _confirmNight;
         private readonly List<string> _allEntities = new List<string>
         {
             "Characters/Dog",
@@ -120,11 +121,47 @@ namespace DarkwoodMultiplayer.DebugTools
             GUILayout.EndScrollView();
 
             GUILayout.Space(4f);
+
+            var ctrl = Singleton<Controller>.Instance;
+            bool canFF = ctrl != null && !Singleton<Dreams>.Instance.dreaming && ctrl.CurrentTime < (int)ctrl.nightTime && ctrl.DoUpdateTime;
+
+            if (_confirmNight)
+            {
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("Fast-forward to night?", GUILayout.ExpandWidth(true));
+                if (GUILayout.Button("Yes", GUILayout.Width(50f)))
+                {
+                    _confirmNight = false;
+                    _show = false;
+                    DoFastForwardToNight();
+                }
+                if (GUILayout.Button("No", GUILayout.Width(50f)))
+                    _confirmNight = false;
+                GUILayout.EndHorizontal();
+            }
+            else
+            {
+                GUI.enabled = canFF;
+                if (GUILayout.Button("<< Fast Forward to Night >>", GUILayout.Height(28f)))
+                    _confirmNight = true;
+                GUI.enabled = true;
+            }
+
             if (GUILayout.Button("Close", GUILayout.Height(30f)))
                 _show = false;
 
             GUILayout.EndVertical();
             GUI.DragWindow();
+        }
+
+        private void DoFastForwardToNight()
+        {
+            var ctrl = Singleton<Controller>.Instance;
+            if (ctrl == null) return;
+
+            ctrl.CurrentTime = (int)ctrl.nightTime;
+            ctrl.refreshTime();
+            Singleton<SaveManager>.Instance.saveGameProfiles();
         }
 
         private void SpawnEntity(string prefabPath)

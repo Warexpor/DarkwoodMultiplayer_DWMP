@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+using DarkwoodMultiplayer;
 using DarkwoodMultiplayer.Networking;
 using DarkwoodMultiplayer.Sync;
 using HarmonyLib;
@@ -7,13 +7,17 @@ using UnityEngine;
 
 namespace DarkwoodMultiplayer.Patches
 {
+    /// <summary>
+    /// When the HOST player dies, sends a PlayerDiedMessage to the client
+    /// so it can handle bag spawn, proxy cleanup, and night-death tracking.
+    /// </summary>
     [HarmonyPatch(typeof(Player), "onDeath")]
-    public static class ClientDeathPatch
+    public static class HostDeathSendPatch
     {
         private static bool Prefix(Player __instance)
         {
             if (LanNetworkManager.IsApplyingRemoteState) return true;
-            if (ModRuntime.Network == null || ModRuntime.Network.Role != NetworkRole.Client)
+            if (ModRuntime.Network == null || ModRuntime.Network.Role != NetworkRole.Host)
                 return true;
             if (!ModRuntime.Network.IsConnected)
                 return true;
@@ -21,7 +25,7 @@ namespace DarkwoodMultiplayer.Patches
             // Final Dreamscene: skip normal death, handle dream death instead
             if (FinalDreamsceneManager.IsActive)
             {
-                ModRuntime.Log?.LogInfo("[Death] Client died during Final Dreamscene — handling dream death");
+                ModRuntime.Log?.LogInfo("[Death] Host died during Final Dreamscene — handling dream death");
                 FinalDreamsceneManager.OnLocalDeathInDream();
                 return true;
             }
@@ -33,16 +37,14 @@ namespace DarkwoodMultiplayer.Patches
             Controller ctrl = Singleton<Controller>.Instance;
             bool isNight = ctrl != null && ctrl.isHardNight && !Core.isDay();
 
-            ModRuntime.Log?.LogInfo($"[Death] Client died at {pos}, isNight={isNight}");
-
-            bool hasItems = __instance.Inventory != null && __instance.Inventory.getAllItems().Count > 1;
+            ModRuntime.Log?.LogInfo($"[Death] Host died at {pos}, isNight={isNight}");
 
             net.Send(NetMessageType.PlayerDied,
                 w => new PlayerDiedMessage
                 {
                     PosX = pos.x, PosY = pos.y, PosZ = pos.z,
                     IsNight = isNight,
-                    HasDropBag = hasItems
+                    HasDropBag = __instance.Inventory != null && __instance.Inventory.getAllItems().Count > 1
                 }.Serialize(w),
                 DeliveryMethod.ReliableOrdered);
 

@@ -71,6 +71,7 @@ namespace DarkwoodMultiplayer
 
             MultiplayerMenu.EnsureExists();
             Spectator.SpectatorModeController.EnsureExists();
+            ManualSaveGUI.EnsureExists();
         }
 
         /// <summary>Stop the network and unpatch Harmony (called on mod unload).</summary>

@@ -94,7 +94,447 @@ namespace DarkwoodMultiplayer.Networking
         /// <summary>Either peer: the local player started or stopped burning (for proxy visual sync).</summary>
         PlayerBurning = 44,
         /// <summary>Client→Host: client's inventory/skills/state backup sent on save.</summary>
-        ClientStateBackup = 45
+        ClientStateBackup = 45,
+        /// <summary>Either peer: spawn a death bag at a world position on the remote.</summary>
+        DeathBagSpawn = 46,
+        /// <summary>Host→Client: synchronize night-death state (which players are dead).</summary>
+        NightDeathState = 47,
+        /// <summary>Host→Client: synchronize a world flag change.</summary>
+        FlagSync = 48,
+        /// <summary>Either peer: synchronize a completed trade (shared merchant assortment).</summary>
+        TradeSync = 49,
+        /// <summary>Either peer: notify remote of dialog open/close during morning hideout.</summary>
+        HideoutDialogState = 50,
+        /// <summary>Host→Client: synchronize NPC dialogue state (alreadyShown, disabled, wantsToTalk).</summary>
+        NPCDialogueSync = 51,
+        /// <summary>Client→Host: request to join/start a dialog session with an NPC.</summary>
+        DialogJoinRequest = 52,
+        /// <summary>Host→Client: current dialog state update (menu, dialogue, trade).</summary>
+        DialogStateUpdate = 53,
+        /// <summary>Client→Host: player selected a decision/option in the dialog.</summary>
+        DialogChoice = 54,
+        /// <summary>Either peer: dialog session ended.</summary>
+        DialogEnded = 55,
+        /// <summary>Either peer: a dream sequence started.</summary>
+        DreamStarted = 56,
+        /// <summary>Either peer: a dream sequence ended.</summary>
+        DreamEnded = 57,
+        /// <summary>Dreamer→Spectator: an item was picked up in a dream (visual sync only).</summary>
+        DreamItemPickup = 58,
+        /// <summary>Dreamer→Spectator: an audio clip was played in the dream (forwarded for spectator to hear).</summary>
+        DreamAudio = 59,
+        /// <summary>Either peer: a player died in the Final Dreamscene (epilogue).</summary>
+        FinalDreamsceneDeath = 60
+    }
+
+    /// <summary>
+    /// Host→Client: synchronize a world flag change (bool or int).
+    /// The host is authoritative for world flags; client applies the change.
+    /// </summary>
+    public struct FlagSyncMessage
+    {
+        /// <summary>Name of the flag.</summary>
+        public string Name;
+        /// <summary>True if this is an int flag; false for bool flag.</summary>
+        public bool IsInt;
+        /// <summary>Value for bool flags (ignored if IsInt).</summary>
+        public bool BoolValue;
+        /// <summary>Value for int flags (ignored if !IsInt).</summary>
+        public int IntValue;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(Name ?? "");
+            w.Put(IsInt);
+            w.Put(BoolValue);
+            w.Put(IntValue);
+        }
+
+        public static FlagSyncMessage Deserialize(NetReader r) => new FlagSyncMessage
+        {
+            Name = r.GetString(),
+            IsInt = r.GetBool(),
+            BoolValue = r.GetBool(),
+            IntValue = r.GetInt()
+        };
+    }
+
+    /// <summary>
+    /// Either peer: synchronize a completed trade so the remote trader's
+    /// inventory is kept in sync (shared assortment).
+    /// </summary>
+    public struct TradeSyncMessage
+    {
+        /// <summary>Name of the NPC traded with.</summary>
+        public string NpcName;
+        /// <summary>Number of item types transferred from trader to player.</summary>
+        public int ItemCount;
+        /// <summary>Item types transferred.</summary>
+        public string[] ItemTypes;
+        /// <summary>Amounts of each item type transferred.</summary>
+        public int[] Amounts;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(NpcName ?? "");
+            w.Put(ItemCount);
+            for (int i = 0; i < ItemCount; i++)
+            {
+                w.Put(ItemTypes?[i] ?? "");
+                w.Put(Amounts != null && i < Amounts.Length ? Amounts[i] : 1);
+            }
+        }
+
+        public static TradeSyncMessage Deserialize(NetReader r)
+        {
+            var msg = new TradeSyncMessage
+            {
+                NpcName = r.GetString(),
+                ItemCount = r.GetInt()
+            };
+            msg.ItemTypes = new string[msg.ItemCount];
+            msg.Amounts = new int[msg.ItemCount];
+            for (int i = 0; i < msg.ItemCount; i++)
+            {
+                msg.ItemTypes[i] = r.GetString();
+                msg.Amounts[i] = r.GetInt();
+            }
+            return msg;
+        }
+    }
+
+    /// <summary>
+    /// Either peer: notify the remote player that the local player
+    /// opened or closed an NPC dialog during morning hideout.
+    /// Used to freeze/unfreeze the remote player's world.
+    /// </summary>
+    public struct HideoutDialogStateMessage
+    {
+        /// <summary>True if a dialog was opened; false if closed.</summary>
+        public bool InDialog;
+
+        public void Serialize(NetWriter w) => w.Put(InDialog);
+
+        public static HideoutDialogStateMessage Deserialize(NetReader r) => new HideoutDialogStateMessage
+        {
+            InDialog = r.GetBool()
+        };
+    }
+
+    /// <summary>
+    /// Host→Client: synchronize NPC dialogue state (alreadyShown, disabled, wantsToTalk).
+    /// Sent by the host when dialog state changes, so the client's NPC mirrors the
+    /// authoritative dialog progression. Covers per-dialogue states beyond just flags.
+    /// </summary>
+    public struct NPCDialogueSyncMessage
+    {
+        /// <summary>NPC name (matching npc.name).</summary>
+        public string NpcName;
+        /// <summary>NPC wantsToTalk state.</summary>
+        public bool WantsToTalk;
+        /// <summary>Number of dialogue states in this message.</summary>
+        public int DialogueCount;
+        /// <summary>Dialogue idNames (matches dialogue.fullName).</summary>
+        public string[] DialogueNames;
+        /// <summary>alreadyShown state per dialogue.</summary>
+        public bool[] AlreadyShown;
+        /// <summary>disabled state per dialogue.</summary>
+        public bool[] Disabled;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(NpcName ?? "");
+            w.Put(WantsToTalk);
+            w.Put(DialogueCount);
+            for (int i = 0; i < DialogueCount; i++)
+            {
+                w.Put(DialogueNames?[i] ?? "");
+                w.Put(AlreadyShown != null && i < AlreadyShown.Length && AlreadyShown[i]);
+                w.Put(Disabled != null && i < Disabled.Length && Disabled[i]);
+            }
+        }
+
+        public static NPCDialogueSyncMessage Deserialize(NetReader r)
+        {
+            var msg = new NPCDialogueSyncMessage
+            {
+                NpcName = r.GetString(),
+                WantsToTalk = r.GetBool(),
+                DialogueCount = r.GetInt()
+            };
+            msg.DialogueNames = new string[msg.DialogueCount];
+            msg.AlreadyShown = new bool[msg.DialogueCount];
+            msg.Disabled = new bool[msg.DialogueCount];
+            for (int i = 0; i < msg.DialogueCount; i++)
+            {
+                msg.DialogueNames[i] = r.GetString();
+                msg.AlreadyShown[i] = r.GetBool();
+                msg.Disabled[i] = r.GetBool();
+            }
+            return msg;
+        }
+    }
+
+    /// <summary>
+    /// Client→Host: request to join or start a dialog session with an NPC.
+    /// The host is the authority for dialog state; the client mirrors it.
+    /// </summary>
+    public struct DialogJoinRequestMessage
+    {
+        /// <summary>Name of the NPC to talk to.</summary>
+        public string NpcName;
+
+        public void Serialize(NetWriter w) => w.Put(NpcName ?? "");
+
+        public static DialogJoinRequestMessage Deserialize(NetReader r) => new DialogJoinRequestMessage
+        {
+            NpcName = r.GetString()
+        };
+    }
+
+    /// <summary>
+    /// Host→Client: current dialog state update. Carries enough context
+    /// for the client to mirror the host's dialog UI.
+    /// </summary>
+    public struct DialogStateUpdateMessage
+    {
+        /// <summary>NPC being talked to.</summary>
+        public string NpcName;
+        /// <summary>0=closed, 1=dialogue, 2=mainOptions, 3=trade, 4=showItems.</summary>
+        public byte StateType;
+        /// <summary>Current dialogue fullName (when StateType==1).</summary>
+        public string DialogueName;
+        /// <summary>Current board index (when StateType==1).</summary>
+        public int BoardIndex;
+        /// <summary>Number of visible decisions/options.</summary>
+        public int DecisionCount;
+        /// <summary>Indexes of each decision in the original dialogue data.</summary>
+        public int[] DecisionIndexes;
+        /// <summary>Display texts for each decision.</summary>
+        public string[] DecisionTexts;
+        /// <summary>Status/feedback message (e.g. "_acceptedTrade").</summary>
+        public string MessageText;
+        /// <summary>True if currently in an active trade session (show exchange UI).</summary>
+        public bool IsTradeActive;
+        /// <summary>Player's offered value in the trade (for display).</summary>
+        public int TradePlayerValue;
+        /// <summary>Trader's offered value (for display).</summary>
+        public int TradeTraderValue;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(NpcName ?? "");
+            w.Put(StateType);
+            w.Put(DialogueName ?? "");
+            w.Put(BoardIndex);
+            w.Put(DecisionCount);
+            for (int i = 0; i < DecisionCount; i++)
+            {
+                w.Put(DecisionIndexes != null && i < DecisionIndexes.Length ? DecisionIndexes[i] : 0);
+                w.Put(DecisionTexts != null && i < DecisionTexts.Length ? (DecisionTexts[i] ?? "") : "");
+            }
+            w.Put(MessageText ?? "");
+            w.Put(IsTradeActive);
+            w.Put(TradePlayerValue);
+            w.Put(TradeTraderValue);
+        }
+
+        public static DialogStateUpdateMessage Deserialize(NetReader r)
+        {
+            var msg = new DialogStateUpdateMessage
+            {
+                NpcName = r.GetString(),
+                StateType = r.GetByte(),
+                DialogueName = r.GetString(),
+                BoardIndex = r.GetInt(),
+                DecisionCount = r.GetInt()
+            };
+            msg.DecisionIndexes = new int[msg.DecisionCount];
+            msg.DecisionTexts = new string[msg.DecisionCount];
+            for (int i = 0; i < msg.DecisionCount; i++)
+            {
+                msg.DecisionIndexes[i] = r.GetInt();
+                msg.DecisionTexts[i] = r.GetString();
+            }
+            msg.MessageText = r.GetString();
+            msg.IsTradeActive = r.GetBool();
+            msg.TradePlayerValue = r.GetInt();
+            msg.TradeTraderValue = r.GetInt();
+            return msg;
+        }
+    }
+
+    /// <summary>
+    /// Client→Host: player selected a decision/option in the dialog.
+    /// </summary>
+    public struct DialogChoiceMessage
+    {
+        /// <summary>NPC being talked to.</summary>
+        public string NpcName;
+        /// <summary>Index of the selected decision within the current board.</summary>
+        public int DecisionIndex;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(NpcName ?? "");
+            w.Put(DecisionIndex);
+        }
+
+        public static DialogChoiceMessage Deserialize(NetReader r) => new DialogChoiceMessage
+        {
+            NpcName = r.GetString(),
+            DecisionIndex = r.GetInt()
+        };
+    }
+
+    /// <summary>
+    /// Either peer: dialog session ended.
+    /// </summary>
+    public struct DialogEndedMessage
+    {
+        /// <summary>NPC that was being talked to.</summary>
+        public string NpcName;
+
+        public void Serialize(NetWriter w) => w.Put(NpcName ?? "");
+
+        public static DialogEndedMessage Deserialize(NetReader r) => new DialogEndedMessage
+        {
+            NpcName = r.GetString()
+        };
+    }
+
+    /// <summary>
+    /// Either peer: a dream sequence started. The dreamer sends this to the
+    /// remote so the remote can freeze the world and enter spectator mode.
+    /// For epilogue dreams, the remote does not freeze (both participate).
+    /// Includes the dream location's world position so the remote can place
+    /// the dream scene at the same coordinates for camera alignment.
+    /// </summary>
+    public struct DreamStartedMessage
+    {
+        /// <summary>Name of the dream preset (e.g. "dream_tutorial_00", "epilog_part1a_dream").</summary>
+        public string PresetName;
+        /// <summary>True if this is the epilogue dream (both players participate).</summary>
+        public bool IsEpilogue;
+        /// <summary>World X position of the dream location on the dreamer's machine.</summary>
+        public float LocPosX;
+        /// <summary>World Y position of the dream location on the dreamer's machine.</summary>
+        public float LocPosY;
+        /// <summary>World Z position of the dream location on the dreamer's machine.</summary>
+        public float LocPosZ;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(PresetName ?? "");
+            w.Put(IsEpilogue);
+            w.Put(LocPosX);
+            w.Put(LocPosY);
+            w.Put(LocPosZ);
+        }
+
+        public static DreamStartedMessage Deserialize(NetReader r) => new DreamStartedMessage
+        {
+            PresetName = r.GetString(),
+            IsEpilogue = r.GetBool(),
+            LocPosX = r.GetFloat(),
+            LocPosY = r.GetFloat(),
+            LocPosZ = r.GetFloat()
+        };
+    }
+
+    /// <summary>
+    /// Either peer: a dream sequence ended. The dreamer sends this so the
+    /// remote unfreezes the world and exits spectator mode.
+    /// </summary>
+    public struct DreamEndedMessage
+    {
+        /// <summary>Name of the dream preset that ended.</summary>
+        public string PresetName;
+
+        public void Serialize(NetWriter w) => w.Put(PresetName ?? "");
+
+        public static DreamEndedMessage Deserialize(NetReader r) => new DreamEndedMessage
+        {
+            PresetName = r.GetString()
+        };
+    }
+
+    /// <summary>
+    /// Dreamer→Spectator: an item was picked up by the dreamer in a dream.
+    /// The spectator cannot interact with dream containers (they don't exist
+    /// on the spectator's machine), so this is for visual sync only — the
+    /// spectator shows a notification or visual indicator.
+    /// </summary>
+    public struct DreamItemPickupMessage
+    {
+        /// <summary>Item type identifier (e.g. "healthPotion").</summary>
+        public string ItemType;
+        /// <summary>Amount picked up.</summary>
+        public int Amount;
+        /// <summary>Container position X (for reference).</summary>
+        public float PosX;
+        /// <summary>Container position Y.</summary>
+        public float PosY;
+        /// <summary>Container position Z.</summary>
+        public float PosZ;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(ItemType ?? "");
+            w.Put(Amount);
+            w.Put(PosX);
+            w.Put(PosY);
+            w.Put(PosZ);
+        }
+
+        public static DreamItemPickupMessage Deserialize(NetReader r) => new DreamItemPickupMessage
+        {
+            ItemType = r.GetString(),
+            Amount = r.GetInt(),
+            PosX = r.GetFloat(),
+            PosY = r.GetFloat(),
+            PosZ = r.GetFloat()
+        };
+    }
+
+    /// <summary>
+    /// Dreamer→Spectator: an audio clip was played by the dreamer during a dream.
+    /// The spectator replays the clip using a custom AudioSource that ignores time scale.
+    /// </summary>
+    public struct DreamAudioMessage
+    {
+        /// <summary>The audioID passed to AudioController.Play().</summary>
+        public string AudioID;
+        /// <summary>World X position where the sound was played.</summary>
+        public float PosX;
+        /// <summary>World Y position where the sound was played.</summary>
+        public float PosY;
+        /// <summary>World Z position where the sound was played.</summary>
+        public float PosZ;
+        /// <summary>Volume of the sound (0–1).</summary>
+        public float Volume;
+        /// <summary>Pitch multiplier for the sound.</summary>
+        public float Pitch;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(AudioID ?? "");
+            w.Put(PosX);
+            w.Put(PosY);
+            w.Put(PosZ);
+            w.Put(Volume);
+            w.Put(Pitch);
+        }
+
+        public static DreamAudioMessage Deserialize(NetReader r) => new DreamAudioMessage
+        {
+            AudioID = r.GetString(),
+            PosX = r.GetFloat(),
+            PosY = r.GetFloat(),
+            PosZ = r.GetFloat(),
+            Volume = r.GetFloat(),
+            Pitch = r.GetFloat()
+        };
     }
 
     /// <summary>
@@ -586,10 +1026,31 @@ namespace DarkwoodMultiplayer.Networking
     /// </summary>
     public struct PlayerDiedMessage
     {
-        /// <summary>Serializes this (empty) message.</summary>
-        public void Serialize(NetWriter w) { }
-        /// <summary>Deserializes a PlayerDiedMessage (no data).</summary>
-        public static PlayerDiedMessage Deserialize(NetReader r) => new PlayerDiedMessage();
+        /// <summary>Death position X in world space.</summary>
+        public float PosX;
+        /// <summary>Death position Y in world space.</summary>
+        public float PosY;
+        /// <summary>Death position Z in world space.</summary>
+        public float PosZ;
+        /// <summary>True if the death occurred during night time (isHardNight && !isDay).</summary>
+        public bool IsNight;
+        /// <summary>Whether a death bag was dropped at the death position.</summary>
+        public bool HasDropBag;
+
+        /// <summary>Serializes this message.</summary>
+        public void Serialize(NetWriter w)
+        {
+            w.Put(PosX); w.Put(PosY); w.Put(PosZ);
+            w.Put(IsNight);
+            w.Put(HasDropBag);
+        }
+        /// <summary>Deserializes a PlayerDiedMessage.</summary>
+        public static PlayerDiedMessage Deserialize(NetReader r) => new PlayerDiedMessage
+        {
+            PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat(),
+            IsNight = r.GetBool(),
+            HasDropBag = r.GetBool()
+        };
     }
 
     /// <summary>Type of entity sound event for host→client sync.</summary>
@@ -1567,6 +2028,105 @@ namespace DarkwoodMultiplayer.Networking
         public static ClientStateBackupMessage Deserialize(NetReader r) => new ClientStateBackupMessage
         {
             JsonData = r.GetString()
+        };
+    }
+
+    /// <summary>
+    /// Either peer: spawn a death bag (DeathDrop) at a world position on the remote world.
+    /// The receiving side creates the prefab and populates its inventory.
+    /// </summary>
+    public struct DeathBagSpawnMessage
+    {
+        public float PosX, PosY, PosZ;
+        public int ExpAmount;
+        /// <summary>Number of items in the Items array.</summary>
+        public int ItemCount;
+        /// <summary>Serialized item types (one per item).</summary>
+        public string[] ItemTypes;
+        /// <summary>Item stack amounts (parallel to ItemTypes).</summary>
+        public int[] ItemAmounts;
+        /// <summary>Item durability values (parallel to ItemTypes).</summary>
+        public float[] ItemDurabilities;
+        /// <summary>Item ammo counts (parallel to ItemTypes).</summary>
+        public int[] ItemAmmos;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(PosX); w.Put(PosY); w.Put(PosZ);
+            w.Put(ExpAmount);
+            int count = ItemTypes != null ? ItemTypes.Length : 0;
+            w.Put(count);
+            for (int i = 0; i < count; i++)
+            {
+                w.Put(ItemTypes[i] ?? "");
+                w.Put(ItemAmounts != null && i < ItemAmounts.Length ? ItemAmounts[i] : 1);
+                w.Put(ItemDurabilities != null && i < ItemDurabilities.Length ? ItemDurabilities[i] : 0f);
+                w.Put(ItemAmmos != null && i < ItemAmmos.Length ? ItemAmmos[i] : 0);
+            }
+        }
+
+        public static DeathBagSpawnMessage Deserialize(NetReader r)
+        {
+            var msg = new DeathBagSpawnMessage
+            {
+                PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat(),
+                ExpAmount = r.GetInt()
+            };
+            int count = r.GetInt();
+            msg.ItemCount = count;
+            msg.ItemTypes = new string[count];
+            msg.ItemAmounts = new int[count];
+            msg.ItemDurabilities = new float[count];
+            msg.ItemAmmos = new int[count];
+            for (int i = 0; i < count; i++)
+            {
+                msg.ItemTypes[i] = r.GetString();
+                msg.ItemAmounts[i] = r.GetInt();
+                msg.ItemDurabilities[i] = r.GetFloat();
+                msg.ItemAmmos[i] = r.GetInt();
+            }
+            return msg;
+        }
+    }
+
+    /// <summary>
+    /// Host→Client (or Client→Host): synchronise night-death coordination state.
+    /// When both players are dead during a hard night, the host triggers morning.
+    /// </summary>
+    public struct NightDeathStateMessage
+    {
+        /// <summary>True if this side's player is currently dead at night.</summary>
+        public bool IsDead;
+        /// <summary>True if the host has determined both players are dead → trigger morning.</summary>
+        public bool BothDeadTrigger;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(IsDead);
+            w.Put(BothDeadTrigger);
+        }
+
+        public static NightDeathStateMessage Deserialize(NetReader r) => new NightDeathStateMessage
+        {
+            IsDead = r.GetBool(),
+            BothDeadTrigger = r.GetBool()
+        };
+    }
+
+    /// <summary>Notifies the remote that a player died in the Final Dreamscene (epilogue).</summary>
+    public struct FinalDreamsceneDeathMessage
+    {
+        /// <summary>True when the sender's player died in the dream.</summary>
+        public bool IsDead;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(IsDead);
+        }
+
+        public static FinalDreamsceneDeathMessage Deserialize(NetReader r) => new FinalDreamsceneDeathMessage
+        {
+            IsDead = r.GetBool()
         };
     }
 }

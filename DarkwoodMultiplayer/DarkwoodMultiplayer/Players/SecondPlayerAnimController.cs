@@ -114,10 +114,6 @@ namespace DarkwoodMultiplayer.Players
             _networkReverseLegs = reverseLegs;
             _hasNetworkLegFacing = true;
 
-            Vector3 euler = transform.eulerAngles;
-            euler.y = torsoFacingY;
-            transform.eulerAngles = euler;
-
             if (flipX != _flipX)
                 SetFlipX(flipX);
 
