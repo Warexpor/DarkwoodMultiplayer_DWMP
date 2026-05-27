@@ -103,6 +103,13 @@ namespace DarkwoodMultiplayer.Players
             if (shadow != null)
             {
                 shadow.gameObject.SetActive(true);
+                var sprite = shadow.GetComponent<tk2dBaseSprite>();
+                if (sprite != null)
+                {
+                    Color c = sprite.color;
+                    c.a = 1f;
+                    sprite.color = c;
+                }
                 log?.LogInfo("RemoteProxy: enabled Shadow.");
             }
         }

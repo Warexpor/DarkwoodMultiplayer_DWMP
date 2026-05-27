@@ -47,7 +47,8 @@ namespace DarkwoodMultiplayer.Patches
             // acquisition happens even when the proxy has fled. Handles the
             // onlyAttackPlayer=true case where canSeeEnemy can't set target.
             if (__instance.aggressiveness != Aggressiveness.neutral &&
-                __instance.aggressiveness != Aggressiveness.follower)
+                __instance.aggressiveness != Aggressiveness.follower &&
+                __instance.attacksFaction(Faction.player))
             {
                 CharBase hostCB = Player.Instance?.GetComponent<CharBase>();
                 if (hostCB != null && __instance.charactersInSight.Contains(hostCB) && !hostCB.invisible && !hostCB.ignoreMe)
@@ -97,17 +98,14 @@ namespace DarkwoodMultiplayer.Patches
                         }
                     }
                 }
-                // Path B: smell detection — bypass FOV if host is within sniff radius
+                // Path B: smell detection — bypass FOV and raycast (smell)
+                // Smell does not require line-of-sight, matching CASE 2 behavior.
                 else
                 {
                     Sniffer sniffer = __instance.GetComponent<Sniffer>();
                     if (sniffer != null && distToHost < sniffer.radius)
                     {
-                        if (Physics.Raycast(__instance.transform.position, toHost, out var sniffHit, distToHost, 18909185))
-                        {
-                            if (sniffHit.collider.GetComponentInParent<Player>() != null)
-                                __instance.charactersInSight.Add(hostCB);
-                        }
+                        __instance.charactersInSight.Add(hostCB);
                     }
                 }
                 return;
@@ -120,86 +118,114 @@ namespace DarkwoodMultiplayer.Patches
             float dist = toRemote.magnitude;
             float maxDist = (float)__instance.farViewDistance * __instance.aniSightRangeModifier;
 
+            // Extend effective range to include Sniffer smell radius so the
+            // proxy is detectable from behind (smell bypasses FOV requirement).
+            float sniffRadius = 0f;
+            var entitySniffer = __instance.GetComponent<Sniffer>();
+            if (entitySniffer != null)
+                sniffRadius = entitySniffer.radius;
+            if (sniffRadius > maxDist)
+                maxDist = sniffRadius;
+
             if (dist > maxDist) return;
-            if (Vector3.Angle(toRemote, __instance.transform.up) > (float)__instance.fieldOfViewRange) return;
+
+            bool inFOV = Vector3.Angle(toRemote, __instance.transform.up) <= (float)__instance.fieldOfViewRange;
+            bool inSniffRange = entitySniffer != null && dist < sniffRadius;
+
+            // FOV restriction can be bypassed by smell detection
+            if (!inFOV && !inSniffRange) return;
 
             // Don't redirect neutral entities (rabbits, pigs, etc.)
             if (__instance.aggressiveness == Aggressiveness.neutral)
                 return;
 
-            Collider myCollider = __instance.GetComponent<Collider>();
-            if (Physics.Raycast(__instance.transform.position, toRemote, out var hit, dist, 18909185))
+            // Detect the proxy by line-of-sight (FOV + raycast) or by smell (direct)
+            RemotePlayerProxy proxy = null;
+            if (inSniffRange && !inFOV)
             {
+                proxy = proxyT.GetComponent<RemotePlayerProxy>();
+            }
+            else
+            {
+                Collider myCollider = __instance.GetComponent<Collider>();
+                if (!Physics.Raycast(__instance.transform.position, toRemote, out var hit, dist, 18909185))
+                    return;
                 if (hit.collider == null || (myCollider != null && hit.collider == myCollider)) return;
-                if (hit.collider.GetComponentInParent<RemotePlayerProxy>() == null) return;
+                proxy = hit.collider.GetComponentInParent<RemotePlayerProxy>();
+                if (proxy == null) return;
+            }
 
-                // Wake up sleeping enemies so they react to the proxy
-                if (__instance.sleeping)
-                    __instance.wakeup();
+            // Respect invisible/ignoreMe flags on the proxy's CharBase
+            CharBase proxyCB = proxyT.GetComponent<CharBase>();
+            if (proxyCB != null && (proxyCB.invisible || proxyCB.ignoreMe))
+                return;
 
-                __instance.canSeeEnemyFar = true;
-                __instance.stopRoutine("lostEnemy", true);
+            // Wake up sleeping enemies so they react to the proxy
+            // Respect wakeUpOnlyManually for scripted encounters.
+            if (__instance.sleeping && !__instance.wakeUpOnlyManually)
+                __instance.wakeup();
 
-                // The original canSeeEnemy already detects the proxy via
-                // charactersInViewRange — do NOT override target for the proxy
-                // when the host is also visible. Preserve vanilla host targeting.
-                CharBase hostCharBase = Player.Instance?.GetComponent<CharBase>();
-                bool hostVisible = hostCharBase != null && __instance.charactersInSight.Contains(hostCharBase);
+            __instance.canSeeEnemyFar = true;
+            __instance.stopRoutine("lostEnemy", true);
 
-                if (!hostVisible)
+            // The original canSeeEnemy already detects the proxy via
+            // charactersInViewRange — do NOT override target for the proxy
+            // when the host is also visible. Preserve vanilla host targeting.
+            CharBase hostCharBase = Player.Instance?.GetComponent<CharBase>();
+            bool hostVisible = hostCharBase != null && __instance.charactersInSight.Contains(hostCharBase);
+
+            if (!hostVisible)
+            {
+                // Only the proxy is visible — ensure target is set to proxy
+                // (original may have missed it due to onlyAttackPlayer etc.)
+                if (__instance.target == null || __instance.target != proxyT)
                 {
-                    // Only the proxy is visible — ensure target is set to proxy
-                    // (original may have missed it due to onlyAttackPlayer etc.)
-                    if (__instance.target == null || __instance.target != proxyT)
+                    if (__instance.aggressiveness != Aggressiveness.neutral &&
+                        __instance.behaviour != Character.Behaviour.chasingTarget &&
+                        __instance.behaviour != Character.Behaviour.defensive &&
+                        __instance.behaviour != Character.Behaviour.following &&
+                        !__instance.canSeeEnemyNear &&
+                        __instance.behaviour != Character.Behaviour.escaping &&
+                        __instance.behaviour != Character.Behaviour.running)
                     {
-                        if (__instance.aggressiveness != Aggressiveness.neutral &&
-                            __instance.behaviour != Character.Behaviour.chasingTarget &&
-                            __instance.behaviour != Character.Behaviour.defensive &&
-                            __instance.behaviour != Character.Behaviour.following &&
-                            !__instance.canSeeEnemyNear &&
-                            __instance.behaviour != Character.Behaviour.escaping &&
-                            __instance.behaviour != Character.Behaviour.running)
-                        {
-                            __instance.stopAndListenTo(proxyT.position);
-                        }
-                        __instance.target = proxyT;
+                        __instance.stopAndListenTo(proxyT.position);
+                    }
+                    __instance.target = proxyT;
+                }
+            }
+
+            if (dist < (float)__instance.nearViewDistance * __instance.aniSightRangeModifier)
+            {
+                __instance.canSeeEnemyNear = true;
+            }
+
+            // Remote player effect checks (shadowWard, forestSpiritWard, EnemyOfTheForest)
+            if (proxy != null)
+            {
+                // EnemyOfTheForest overrides fear effects — animals always attack
+                if (!proxy.RemoteHasEnemyOfTheForest)
+                {
+                    if (__instance.afraidOfHideout && proxy.RemoteHasShadowWard)
+                    {
+                        __instance.runAway(proxyT.position);
+                        __instance.wantToDespawn = true;
+                    }
+                    if (__instance.afraidOfForestSpiritWard && proxy.RemoteHasForestSpiritWard)
+                    {
+                        __instance.runAway(proxyT.position);
+                        __instance.blind = true;
                     }
                 }
 
-                if (dist < (float)__instance.nearViewDistance * __instance.aniSightRangeModifier)
+                // EnemyOfTheForest: animalAggressive entities always chase the proxy
+                if (proxy.RemoteHasEnemyOfTheForest && __instance.faction == Faction.animalAggressive)
                 {
-                    __instance.canSeeEnemyNear = true;
-                }
-
-                // Remote player effect checks (shadowWard, forestSpiritWard, EnemyOfTheForest)
-                RemotePlayerProxy proxy = hit.collider.GetComponentInParent<RemotePlayerProxy>();
-                if (proxy != null)
-                {
-                    // EnemyOfTheForest overrides fear effects — animals always attack
-                    if (!proxy.RemoteHasEnemyOfTheForest)
-                    {
-                        if (__instance.afraidOfHideout && proxy.RemoteHasShadowWard)
-                        {
-                            __instance.runAway(proxyT.position);
-                            __instance.wantToDespawn = true;
-                        }
-                        if (__instance.afraidOfForestSpiritWard && proxy.RemoteHasForestSpiritWard)
-                        {
-                            __instance.runAway(proxyT.position);
-                            __instance.blind = true;
-                        }
-                    }
-
-                    // EnemyOfTheForest: animalAggressive entities always chase the proxy
-                    if (proxy.RemoteHasEnemyOfTheForest && __instance.faction == Faction.animalAggressive)
-                    {
-                        __instance.target = proxyT;
-                        __instance.canSeeEnemyFar = true;
-                        if (dist < (float)__instance.nearViewDistance * __instance.aniSightRangeModifier)
-                            __instance.canSeeEnemyNear = true;
-                        if (__instance.behaviour != Character.Behaviour.chasingTarget)
-                            __instance.attackCharacter(proxyT);
-                    }
+                    __instance.target = proxyT;
+                    __instance.canSeeEnemyFar = true;
+                    if (dist < (float)__instance.nearViewDistance * __instance.aniSightRangeModifier)
+                        __instance.canSeeEnemyNear = true;
+                    if (__instance.behaviour != Character.Behaviour.chasingTarget)
+                        __instance.attackCharacter(proxyT);
                 }
             }
 
@@ -230,7 +256,7 @@ namespace DarkwoodMultiplayer.Patches
             if (destTransform.GetComponent<RemotePlayerProxy>() == null)
                 return true;
 
-            if (__instance.sleeping)
+            if (__instance.sleeping && !__instance.wakeUpOnlyManually)
             {
                 __instance.wakeup();
                 __instance.sleeping = false;
@@ -539,8 +565,10 @@ namespace DarkwoodMultiplayer.Patches
     }
 
     /// <summary>
-    /// Extends WorldGrid.refreshPosition to also activate grid nodes near
-    /// the remote proxy, preventing proxy-visibility culling on the host.
+    /// Enters WorldGrid nodes near the remote proxy so entities in those
+    /// chunks become active on the host. This Postfix runs after refreshNodes
+    /// finishes, so the leave blocker (WorldGridNodeLeavePatch) must also be
+    /// active to prevent deactivation during the coroutine.
     /// </summary>
     [HarmonyPatch(typeof(WorldGrid), "refreshPosition")]
     public static class HostWorldGridProxyCullPatch
@@ -556,17 +584,51 @@ namespace DarkwoodMultiplayer.Patches
             if (proxyPos == Vector3.zero)
                 return;
 
-            float cullDistX = ((float)Screen.width + 500f * Mathf.Max(Core.ResolutionWidthModifier, Core.ResolutionHeightModifier)) / Singleton<Controller>.Instance.cameraZoom;
-            float cullDistY = ((float)Screen.height + 500f * Mathf.Max(Core.ResolutionWidthModifier, Core.ResolutionHeightModifier)) / Singleton<Controller>.Instance.cameraZoom;
-
+            float activationRange = 3500f;
             var nodes = __instance.currentGrid.nodes;
             for (int i = 0; i < nodes.Count; i++)
             {
                 Vector2 np = nodes[i].position;
-                bool proxyNear = Mathf.Abs(proxyPos.x - np.x) <= cullDistX && Mathf.Abs(proxyPos.z - np.y) <= cullDistY;
+                bool proxyNear = Mathf.Abs(proxyPos.x - np.x) <= activationRange
+                              && Mathf.Abs(proxyPos.z - np.y) <= activationRange;
                 if (proxyNear)
                     nodes[i].enter(force);
             }
+        }
+    }
+
+    /// <summary>
+    /// Prevents WorldGridNode.leave() from deactivating nodes near the remote
+    /// proxy, so entities near the client player remain active on the host for
+    /// AI, physics, and damage processing. Without this, the refreshNodes
+    /// coroutine (run every 0.4-0.6s) deactivates all nodes outside the host's
+    /// screen-size range, including proxy-near nodes, causing them to be
+    /// inactive for the entire coroutine duration (~100+ frames).
+    /// </summary>
+    [HarmonyPatch(typeof(WorldGrid.Node), "leave", new[] { typeof(bool) })]
+    public static class WorldGridNodeLeavePatch
+    {
+        private static bool Prefix(WorldGrid.Node __instance, bool force)
+        {
+            if (ModRuntime.Network == null || ModRuntime.Network.Role != NetworkRole.Host)
+                return true;
+            if (!PlayerPositionManager.HasRemotePlayer)
+                return true;
+            if (force)
+                return true;
+
+            Vector3 proxyPos = PlayerPositionManager.RemotePlayerPosition;
+            if (proxyPos == Vector3.zero)
+                return true;
+
+            Vector2 np = __instance.position;
+            float activationRange = 3500f;
+            bool proxyNear = Mathf.Abs(proxyPos.x - np.x) <= activationRange
+                          && Mathf.Abs(proxyPos.z - np.y) <= activationRange;
+            if (proxyNear)
+                return false;
+
+            return true;
         }
     }
 }

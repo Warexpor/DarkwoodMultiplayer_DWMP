@@ -1,3 +1,4 @@
+using System;
 using DarkwoodMultiplayer.Networking;
 using HarmonyLib;
 using UnityEngine;
@@ -324,17 +325,33 @@ namespace DarkwoodMultiplayer.Sync
     /// <summary>
     /// Harmony patch: intercepts InteractiveItem.switchMe() (player-toggled levers, switches,
     /// buttons) and broadcasts the new toggle state to all peers.
+    /// For wells: only sync the false→true transition (fix/repair) so both players see it
+    /// as repaired; true→false (use/heal) is per-player so each can heal independently.
     /// </summary>
     [HarmonyPatch(typeof(InteractiveItem), "switchMe")]
     public static class InteractiveItemSwitchPatch
     {
-        private static void Postfix(InteractiveItem __instance)
+        private static void Prefix(InteractiveItem __instance, out bool __state)
+        {
+            __state = __instance.isOn;
+        }
+
+        private static void Postfix(InteractiveItem __instance, bool __state)
         {
             if (ModRuntime.Network == null)
                 return;
 
             if (LanNetworkManager.IsApplyingRemoteState)
                 return;
+
+            // For wells: only sync the fix/repair (false→true), not the use/heal (true→false).
+            // Non-well items: sync both directions as before.
+            if (IsWellInteractiveItem(__instance))
+            {
+                if (__state || !__instance.isOn)
+                    return; // was already on, or turned off (heal) — skip
+                // __state==false && isOn==true → fix/repair → sync
+            }
 
             Vector3 p = __instance.transform.position;
             Vector3 key = new Vector3(
@@ -348,6 +365,18 @@ namespace DarkwoodMultiplayer.Sync
                 IsOn = __instance.isOn
             });
             ModRuntime.Log?.LogInfo("[InteractiveItemSync] switchMe at " + key + " isOn=" + __instance.isOn);
+        }
+
+        private static bool IsWellInteractiveItem(InteractiveItem ii)
+        {
+            Transform t = ii.transform;
+            while (t != null)
+            {
+                if (t.name.IndexOf("well", StringComparison.OrdinalIgnoreCase) >= 0)
+                    return true;
+                t = t.parent;
+            }
+            return false;
         }
     }
 

@@ -1,6 +1,7 @@
 using DarkwoodMultiplayer.Networking;
 using DarkwoodMultiplayer.Spectator;
 using LiteNetLib;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace DarkwoodMultiplayer.Sync
@@ -16,12 +17,39 @@ namespace DarkwoodMultiplayer.Sync
         public static bool IsRemoteDead => _remoteDeadInDream;
         public static bool AreBothDead => _isActive && _localDeadInDream && _remoteDeadInDream;
 
+        private static readonly HashSet<string> DualPresenceDreams = new HashSet<string>
+        {
+            "dream_village_cellar",
+            "dream_doctor_01",
+            "dream_onechance_01_2"
+        };
+
+        private static readonly HashSet<string> DeathTrackedDreams = new HashSet<string>
+        {
+            "dream_village_cellar",
+            "dream_doctor_01",
+            "dream_onechance_01_2"
+        };
+
+        public static bool IsDualPresenceDream(string presetName)
+        {
+            if (string.IsNullOrEmpty(presetName)) return false;
+            if (DualPresenceDreams.Contains(presetName)) return true;
+            return presetName.StartsWith("epilog_");
+        }
+
+        public static bool IsDeathTrackedDream(string presetName)
+        {
+            if (string.IsNullOrEmpty(presetName)) return false;
+            return DeathTrackedDreams.Contains(presetName);
+        }
+
         public static void OnDreamStarted()
         {
             _isActive = true;
             _localDeadInDream = false;
             _remoteDeadInDream = false;
-            ModRuntime.Log?.LogInfo("[FinalDreamscene] Dream started — both players in epilogue");
+            ModRuntime.Log?.LogInfo("[FinalDreamscene] Dream started — death tracking active");
         }
 
         public static void OnDreamEnded()

@@ -105,7 +105,8 @@ namespace DarkwoodMultiplayer.Patches
                 return;
 
             // Wake up sleeping entities so they can attack
-            if (charComponent.sleeping)
+            // Respect wakeUpOnlyManually for scripted encounters.
+            if (charComponent.sleeping && !charComponent.wakeUpOnlyManually)
             {
                 charComponent.wakeup();
                 charComponent.sleeping = false;

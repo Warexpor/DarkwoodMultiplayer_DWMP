@@ -52,8 +52,11 @@ namespace DarkwoodMultiplayer.Networking
             int count = 0;
 
             Vector3 hostPos = Player.Instance != null ? Player.Instance.transform.position : Vector3.zero;
-            // 700-unit radius around host or remote player to cull distant entities and save bandwidth
-            float maxDistSq = 700f * 700f;
+            // 3500-unit radius around host or remote player — matches the WorldGrid
+            // proxy activation range (HostWorldGridProxyCullPatch).  This guarantees
+            // that every entity near either player is broadcast, so the client never
+            // needs to simulate AI independently.
+            float maxDistSq = 3500f * 3500f;
 
             for (int i = 0; i < all.Length && count < maxEntities; i++)
             {
@@ -109,7 +112,7 @@ namespace DarkwoodMultiplayer.Networking
             for (int i = 0; i < entityCount; i++)
                 _buffer[i].Serialize(writer);
 
-            _peer.Send(writer.CopyData(), DeliveryMethod.Unreliable);
+            _peer.Send(writer.CopyData(), DeliveryMethod.ReliableOrdered);
 
             _sendCount++;
             // Log every 10th send for low-frequency diagnostics without spamming

@@ -12,14 +12,13 @@ namespace DarkwoodMultiplayer.Sync
         private static bool _localDreamActive;
         private static bool _remoteDreamActive;
         private static string _currentDreamPreset;
-        private static bool _isEpilogueDream;
+        private static bool _isDualPresence;
 
         private static Vector3 _preDreamPosition;
         private static string _preDreamGridName;
-        private static bool _preDreamInEpilogue;
 
         public static bool IsDreamActive => _localDreamActive || _remoteDreamActive;
-        public static bool IsEpilogueDream => _isEpilogueDream;
+        public static bool IsDualPresence => _isDualPresence;
         public static string CurrentDreamPreset => _currentDreamPreset;
 
         public static void OnLocalDreamStarted(string presetName, Vector3 locationPosition)
@@ -27,9 +26,9 @@ namespace DarkwoodMultiplayer.Sync
             if (_localDreamActive) return;
             _localDreamActive = true;
             _currentDreamPreset = presetName;
-            _isEpilogueDream = presetName == "epilog_part1a_dream";
+            _isDualPresence = FinalDreamsceneManager.IsDualPresenceDream(presetName);
 
-            if (_isEpilogueDream)
+            if (FinalDreamsceneManager.IsDeathTrackedDream(presetName))
                 FinalDreamsceneManager.OnDreamStarted();
 
             var net = ModRuntime.Network as LanNetworkManager;
@@ -39,7 +38,6 @@ namespace DarkwoodMultiplayer.Sync
                     w => new DreamStartedMessage
                     {
                         PresetName = presetName,
-                        IsEpilogue = _isEpilogueDream,
                         LocPosX = locationPosition.x,
                         LocPosY = locationPosition.y,
                         LocPosZ = locationPosition.z
@@ -47,14 +45,14 @@ namespace DarkwoodMultiplayer.Sync
                     LiteNetLib.DeliveryMethod.ReliableOrdered);
             }
 
-            ModRuntime.Log?.LogInfo($"[DreamSync] Local dream started: {presetName}, epilogue={_isEpilogueDream}, pos={locationPosition}");
+            ModRuntime.Log?.LogInfo($"[DreamSync] Local dream started: {presetName}, dualPresence={_isDualPresence}, pos={locationPosition}");
         }
 
         public static void OnLocalDreamEnded()
         {
             if (!_localDreamActive) return;
 
-            if (_isEpilogueDream)
+            if (FinalDreamsceneManager.IsDeathTrackedDream(_currentDreamPreset))
                 FinalDreamsceneManager.OnDreamEnded();
 
             _localDreamActive = false;
@@ -70,26 +68,28 @@ namespace DarkwoodMultiplayer.Sync
             ModRuntime.Log?.LogInfo($"[DreamSync] Local dream ended: {_currentDreamPreset}");
 
             _currentDreamPreset = null;
-            _isEpilogueDream = false;
+            _isDualPresence = false;
         }
 
-        public static void OnRemoteDreamStarted(string presetName, bool isEpilogue, Vector3 locationPosition)
+        public static void OnRemoteDreamStarted(string presetName, bool _, Vector3 locationPosition)
         {
             if (_remoteDreamActive) return;
             _remoteDreamActive = true;
             _currentDreamPreset = presetName;
-            _isEpilogueDream = isEpilogue;
+            _isDualPresence = FinalDreamsceneManager.IsDualPresenceDream(presetName);
 
-            if (isEpilogue)
+            if (FinalDreamsceneManager.IsDeathTrackedDream(presetName))
                 FinalDreamsceneManager.OnDreamStarted();
 
             SavePreDreamState();
 
-            ModRuntime.Log?.LogInfo($"[DreamSync] Remote dream started: {presetName}, epilogue={isEpilogue}, pos={locationPosition}");
+            ModRuntime.Log?.LogInfo($"[DreamSync] Remote dream started: {presetName}, dualPresence={_isDualPresence}, pos={locationPosition}");
 
-            if (isEpilogue)
+            if (_isDualPresence)
             {
-                Singleton<Controller>.Instance.StartCoroutine(LoadDreamSceneCoroutine(presetName, locationPosition, isEpilogue: true));
+                ApplyDreamCameraEffects(presetName);
+                ShowDreamTransition();
+                Singleton<Controller>.Instance.StartCoroutine(LoadDreamSceneCoroutine(presetName, locationPosition, false));
                 return;
             }
 
@@ -97,21 +97,21 @@ namespace DarkwoodMultiplayer.Sync
             ApplyDreamCameraEffects(presetName);
             ShowDreamTransition();
 
-            Singleton<Controller>.Instance.StartCoroutine(LoadDreamSceneCoroutine(presetName, locationPosition, isEpilogue: false));
+            Singleton<Controller>.Instance.StartCoroutine(LoadDreamSceneCoroutine(presetName, locationPosition, false));
         }
 
         public static void OnRemoteDreamEnded()
         {
             if (!_remoteDreamActive) return;
 
-            if (_isEpilogueDream)
+            if (FinalDreamsceneManager.IsDeathTrackedDream(_currentDreamPreset))
                 FinalDreamsceneManager.OnDreamEnded();
 
             _remoteDreamActive = false;
 
             ModRuntime.Log?.LogInfo($"[DreamSync] Remote dream ended: {_currentDreamPreset}");
 
-            if (!_isEpilogueDream)
+            if (!_isDualPresence)
             {
                 var spec = SpectatorModeController.Instance;
                 if (spec != null && spec.IsSpectating)
@@ -126,16 +126,20 @@ namespace DarkwoodMultiplayer.Sync
 
             CleanupDreamScene(_currentDreamPreset);
 
-            if (!_isEpilogueDream)
+            if (!_isDualPresence)
             {
                 RemoveDreamCameraEffects(_currentDreamPreset);
                 RemoveDreamFreeze();
+            }
+            else
+            {
+                RemoveDreamCameraEffects(_currentDreamPreset);
             }
 
             RestorePreDreamState();
 
             _currentDreamPreset = null;
-            _isEpilogueDream = false;
+            _isDualPresence = false;
         }
 
         public static void OnDisconnected()
@@ -144,7 +148,7 @@ namespace DarkwoodMultiplayer.Sync
 
             if (_remoteDreamActive)
             {
-                if (!_isEpilogueDream)
+                if (!_isDualPresence)
                 {
                     var spec = SpectatorModeController.Instance;
                     if (spec != null && spec.IsSpectating)
@@ -157,17 +161,21 @@ namespace DarkwoodMultiplayer.Sync
                     }
                 }
                 CleanupDreamScene(_currentDreamPreset);
-                if (!_isEpilogueDream)
+                if (!_isDualPresence)
                 {
                     RemoveDreamCameraEffects(_currentDreamPreset);
                     RemoveDreamFreeze();
+                }
+                else
+                {
+                    RemoveDreamCameraEffects(_currentDreamPreset);
                 }
                 RestorePreDreamState();
             }
             _localDreamActive = false;
             _remoteDreamActive = false;
             _currentDreamPreset = null;
-            _isEpilogueDream = false;
+            _isDualPresence = false;
             FreezeTracker.Reset();
         }
 
@@ -178,7 +186,6 @@ namespace DarkwoodMultiplayer.Sync
             _preDreamGridName = Singleton<WorldGrid>.Instance != null && Singleton<WorldGrid>.Instance.currentGrid != null
                 ? Singleton<WorldGrid>.Instance.currentGrid.name
                 : "World";
-            _preDreamInEpilogue = player != null && player.inEpilogue;
         }
 
         private static void RestorePreDreamState()
@@ -190,14 +197,7 @@ namespace DarkwoodMultiplayer.Sync
                 if (player.immobilised)
                     player.stopImmobilise();
                 player.switchVisibilty(true);
-                if (_isEpilogueDream)
-                {
-                    player.inEpilogue = _preDreamInEpilogue;
-                }
-                if (!_isEpilogueDream)
-                {
-                    player.teleportTo(_preDreamPosition, Quaternion.Euler(90f, 0f, 0f));
-                }
+                player.teleportTo(_preDreamPosition, Quaternion.Euler(90f, 0f, 0f));
             }
 
             if (Singleton<WorldGrid>.Instance != null)
@@ -209,11 +209,11 @@ namespace DarkwoodMultiplayer.Sync
                 Singleton<WorldGrid>.Instance.refreshPosition(restorePos, instant: true, force: true);
             }
 
-            if (Singleton<UI>.Instance != null && !_isEpilogueDream)
+            if (Singleton<UI>.Instance != null)
                 Singleton<UI>.Instance.showVisibleUI();
         }
 
-        private static IEnumerator LoadDreamSceneCoroutine(string locationName, Vector3 position, bool isEpilogue)
+        private static IEnumerator LoadDreamSceneCoroutine(string locationName, Vector3 position, bool _)
         {
             yield return null;
 
@@ -232,17 +232,9 @@ namespace DarkwoodMultiplayer.Sync
                 ? component.playerSpawn.transform.position
                 : position;
 
-            if (isEpilogue)
+            if (_isDualPresence)
             {
                 player.teleportTo(spawnPos, Quaternion.Euler(90f, 0f, 0f));
-                player.inEpilogue = true;
-
-                if (Singleton<UI>.Instance != null)
-                    Singleton<UI>.Instance.hideVisibleUI();
-
-                if (Singleton<CamMain>.Instance != null && Singleton<CamMain>.Instance.FireMaskCam != null)
-                    Singleton<CamMain>.Instance.FireMaskCam.gameObject.SetActive(value: true);
-
                 ApplyDreamCameraEffects(locationName);
             }
             else
@@ -261,12 +253,12 @@ namespace DarkwoodMultiplayer.Sync
                 Singleton<WorldGrid>.Instance.refreshPosition(player._transform.position, instant: true, force: true);
             }
 
-            if (!isEpilogue)
+            if (!_isDualPresence)
             {
                 EnterDreamSpectator();
             }
 
-            ModRuntime.Log?.LogInfo($"[DreamSync] Player positioned at dream location, epilogue={isEpilogue}");
+            ModRuntime.Log?.LogInfo($"[DreamSync] Player positioned at dream location: {locationName}");
         }
 
         private static IEnumerator StartLoadDreamScene(string locationName, Vector3 position, Action<Location> onComplete)

@@ -39,9 +39,9 @@ namespace DarkwoodMultiplayer
                 _harmony.PatchAll();
 
                 Log.LogInfo("================================================");
-                Log.LogInfo("  " + PluginInfo.Name + " v" + PluginInfo.Version);
+                Log.LogInfo("  " + PluginInfo.Name + " v" + PluginInfo.DisplayVersion);
                 Log.LogInfo("  Config: BepInEx/config/" + PluginInfo.Guid + ".cfg");
-                Log.LogInfo("  Press M / F2 / F3 / Home to open the multiplayer menu");
+                Log.LogInfo("  F2=menu, F3=save, F4=spectator, F5=debug tools");
                 Log.LogInfo("================================================");
 
                 EnsureRunning();

@@ -15,6 +15,7 @@ namespace DarkwoodMultiplayer.Patches
             if (TraverseHack.ApplyingFromNetwork) return;
 
             // Skip footsteps — already handled by proxy leg animation events
+            // (playFootHitGround plays locally from animation events on each peer)
             if (audioID.IndexOf("foot", System.StringComparison.OrdinalIgnoreCase) >= 0) return;
             if (audioID.IndexOf("walk_clothes", System.StringComparison.OrdinalIgnoreCase) >= 0) return;
 
@@ -24,6 +25,11 @@ namespace DarkwoodMultiplayer.Patches
 
             // Skip UI/inventory sounds — host inventory actions should not be audible on the client
             if (audioID.StartsWith("UI_", System.StringComparison.OrdinalIgnoreCase)) return;
+
+            // Skip open_drawer — PlayerOpenInventorySoundPatch already forwards it
+            // with the correct player transform position via AudioPlayStrTrans.
+            // This no-arg path would cause a duplicate on the remote peer.
+            if (audioID == "open_drawer") return;
 
             net.SendPlayerAudio(new PlayerAudioMessage
             {
@@ -48,10 +54,12 @@ namespace DarkwoodMultiplayer.Patches
             return t.GetComponent<Character>() != null;
         }
 
-        internal static bool IsNearPlayer(Vector3 pos)
+        internal static bool IsDraggedItemTransform(Transform t)
         {
+            if (t == null) return false;
             Player p = Player.Instance;
-            return p != null && Vector3.Distance(pos, p.transform.position) < 10f;
+            return p != null && p.dragging && p.itemBeingDragged != null
+                && t == p.itemBeingDragged.transform;
         }
     }
 
@@ -79,8 +87,7 @@ namespace DarkwoodMultiplayer.Patches
                 && PlayerAudioHelper.IsEnemyTransform(parentObj))
             {
                 Vector3 pos = parentObj.position;
-                if (PlayerAudioHelper.IsNearPlayer(pos))
-                    PlayerAudioHelper.ForwardSound(audioID, 1f, pos);
+                PlayerAudioHelper.ForwardSound(audioID, 1f, pos);
             }
         }
     }
@@ -106,8 +113,7 @@ namespace DarkwoodMultiplayer.Patches
                 && PlayerAudioHelper.IsEnemyTransform(parentObj))
             {
                 Vector3 pos = parentObj.position;
-                if (PlayerAudioHelper.IsNearPlayer(pos))
-                    PlayerAudioHelper.ForwardSound(audioID, volume, pos);
+                PlayerAudioHelper.ForwardSound(audioID, volume, pos);
             }
         }
     }
@@ -132,7 +138,6 @@ namespace DarkwoodMultiplayer.Patches
                     && PlayerAudioHelper.IsEnemyTransform(parentObj))
                 {
                     pos = parentObj.position;
-                    if (!PlayerAudioHelper.IsNearPlayer(pos)) return;
                 }
                 else
                 {
@@ -141,7 +146,9 @@ namespace DarkwoodMultiplayer.Patches
             }
             else
             {
-                if (!PlayerAudioHelper.IsNearPlayer(worldPosition)) return;
+                // World-position sound without a parent entity — forward it.
+                // Receiver-side AudioSuppressionPatch blocks sounds >500f from
+                // the local player, so this is safe to send unconditionally.
             }
 
             PlayerAudioHelper.ForwardSound(audioID, 1f, pos);

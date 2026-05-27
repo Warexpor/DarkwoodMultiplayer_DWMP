@@ -68,7 +68,7 @@ namespace DarkwoodMultiplayer
                 _windowRect.width / scale,
                 _windowRect.height / scale);
 
-            scaledRect = GUI.Window(987654, scaledRect, DrawWindow, PluginInfo.Name + " v" + PluginInfo.Version);
+            scaledRect = GUI.Window(987654, scaledRect, DrawWindow, PluginInfo.Name + " v" + PluginInfo.DisplayVersion);
 
             _windowRect = new Rect(
                 scaledRect.x * scale,
@@ -89,9 +89,6 @@ namespace DarkwoodMultiplayer
 
             GUILayout.Label("LAN co-op", GUILayout.ExpandWidth(true));
             GUILayout.Label("Status: " + (Network != null ? Network.StatusText : "No network"), GUILayout.ExpandWidth(true));
-
-            if (!string.IsNullOrEmpty(ClientSaveBridge.LastClientSaveNote))
-                GUILayout.Label(ClientSaveBridge.LastClientSaveNote, GUILayout.ExpandWidth(true));
 
             GUILayout.Space(8f);
             GUILayout.Label("Host IP:", GUILayout.ExpandWidth(true));

@@ -11,32 +11,46 @@ namespace DarkwoodMultiplayer.Patches
     {
         private static bool Prefix(Character __instance, float Damage, Transform attackerTransform, bool byPlayer)
         {
-            var net = ModRuntime.Network as LanNetworkManager;
-            if (net == null || net.Role != NetworkRole.Client)
-                return true;
-
-            if (!ClientEntityInterpolationService.IsHostSynced(__instance))
-                return true;
-
-            // Case 1: Direct player damage (hitscan, thrown weapon direct hit)
-            bool isPlayerDamage = attackerTransform != null && Player.Instance != null && attackerTransform == Player.Instance.transform;
-
-            // Case 2: Local explosion AOE splash damage that will be re-enacted on the host
-            bool isExplosionAOE = TraverseHack.IsInsideLocalExplosion;
-
-            if (!isPlayerDamage && !isExplosionAOE)
-                return true;
-
-            short stableId = CharacterTracker.GetStableId(__instance);
-            Vector3 pos = Player.Instance != null ? Player.Instance.transform.position : Vector3.zero;
-            net.Send(NetMessageType.PlayerAttack, w => new PlayerAttackMessage
+            try
             {
-                TargetNameHash = stableId,
-                Damage = (int)Damage,
-                AttackerPosX = pos.x, AttackerPosY = pos.y, AttackerPosZ = pos.z
-            }.Serialize(w), DeliveryMethod.ReliableOrdered);
+                var net = ModRuntime.Network as LanNetworkManager;
+                if (net == null || net.Role != NetworkRole.Client)
+                    return true;
 
-            return false;
+                bool isPlayerDamage = attackerTransform != null && Player.Instance != null && attackerTransform == Player.Instance.transform;
+                bool isProjectileDamage = attackerTransform == null && TraverseHack.IsInsidePlayerBulletCollision;
+                bool isExplosionAOE = TraverseHack.IsInsideLocalExplosion;
+
+                if (!isPlayerDamage && !isProjectileDamage && !isExplosionAOE)
+                    return true;
+
+                bool isSynced = ClientEntityInterpolationService.IsHostSynced(__instance);
+                short stableId = isSynced ? CharacterTracker.GetStableId(__instance) : (short)0;
+                Vector3 pos = Player.Instance != null ? Player.Instance.transform.position : Vector3.zero;
+                Vector3 targetPos = __instance.transform.position;
+
+                net.Send(NetMessageType.PlayerAttack, w => new PlayerAttackMessage
+                {
+                    TargetNameHash = stableId,
+                    Damage = (int)Damage,
+                    AttackerPosX = pos.x, AttackerPosY = pos.y, AttackerPosZ = pos.z,
+                    TargetName = __instance.name,
+                    TargetPosX = targetPos.x, TargetPosY = targetPos.y, TargetPosZ = targetPos.z
+                }.Serialize(w), DeliveryMethod.ReliableOrdered);
+
+                ModRuntime.Log?.LogInfo($"[DamageRedirect] sent PlayerAttack: target={__instance.name} id={stableId} dmg={(int)Damage} synced={isSynced}");
+
+                // Projectile weapons: always block local getHit (host is authoritative)
+                if (isProjectileDamage)
+                    return false;
+
+                return !isSynced;
+            }
+            catch (System.Exception ex)
+            {
+                ModRuntime.Log?.LogInfo($"[DamageRedirect] EXCEPTION in Prefix: {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}");
+                return true;
+            }
         }
     }
 }

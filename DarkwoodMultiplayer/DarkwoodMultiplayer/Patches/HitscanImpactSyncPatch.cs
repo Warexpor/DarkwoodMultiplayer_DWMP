@@ -34,6 +34,8 @@ namespace DarkwoodMultiplayer.Patches
             {
                 int dmg = Mathf.Max(1, player.currentItem?.baseClass?.damage ?? 10);
                 Vector3 proxyPos = proxy.transform.position;
+                CharBase proxyCB = proxy.GetComponent<CharBase>();
+                bool inWater = proxyCB != null && proxyCB.inWater;
 
                 if (net.Role == NetworkRole.Host)
                 {
@@ -46,12 +48,6 @@ namespace DarkwoodMultiplayer.Patches
                             ShowRedScreen = true
                         }.Serialize(w);
                     }, DeliveryMethod.ReliableOrdered);
-
-                    float yRot = player.transform.eulerAngles.y;
-                    Core.AddPrefab("FX/Bloodsplats/Shotsplat", hitPoint,
-                        Quaternion.Euler(90f, yRot + Random.Range(-20f, 20f), 0f), null);
-
-                    ModRuntime.Log?.LogInfo("[HitscanFX] host hit proxy, dmg=" + dmg);
                 }
                 else
                 {
@@ -63,18 +59,31 @@ namespace DarkwoodMultiplayer.Patches
                             AttackerPosX = proxyPos.x, AttackerPosY = proxyPos.y, AttackerPosZ = proxyPos.z
                         }.Serialize(w);
                     }, DeliveryMethod.ReliableOrdered);
-
-                    float yRot = player.transform.eulerAngles.y;
-                    TraverseHack.ApplyingFromNetwork = true;
-                    try
-                    {
-                        Core.AddPrefab("FX/Bloodsplats/Shotsplat", hitPoint,
-                            Quaternion.Euler(90f, yRot + Random.Range(-20f, 20f), 0f), null);
-                    }
-                    finally { TraverseHack.ApplyingFromNetwork = false; }
-
-                    ModRuntime.Log?.LogInfo("[HitscanFX] client hit proxy, dmg=" + dmg);
                 }
+
+                float yRot = player.transform.eulerAngles.y;
+                string bloodPrefab = inWater ? "FX/Bloodsplats/Shotsplat" : "FX/Bloodsplats/Shotsplat_stay";
+                TraverseHack.ApplyingFromNetwork = true;
+                try
+                {
+                    Core.AddPrefab(bloodPrefab, hitPoint,
+                        Quaternion.Euler(90f, yRot + Random.Range(-20f, 20f), 0f), null);
+                }
+                finally { TraverseHack.ApplyingFromNetwork = false; }
+
+                ModRuntime.Log?.LogInfo($"[HitscanFX] {(net.Role == NetworkRole.Host ? "host" : "client")} hit proxy, dmg=" + dmg);
+
+                // Send BulletImpact so the other peer sees the same blood
+                net.Send(NetMessageType.BulletImpact, w => new BulletImpactMessage
+                {
+                    PrefabName = bloodPrefab,
+                    PoolName = "",
+                    PosX = hitPoint.x, PosY = hitPoint.y, PosZ = hitPoint.z,
+                    RotX = 90f,
+                    RotY = yRot + Random.Range(-40f, 40f),
+                    RotZ = 0f
+                }.Serialize(w), DeliveryMethod.ReliableOrdered);
+
                 return;
             }
 

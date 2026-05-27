@@ -138,7 +138,27 @@ namespace DarkwoodMultiplayer.Networking
         /// <summary>Either peer: an ExperienceMachine (hideout oven) was enabled.</summary>
         HideoutUpgrade = 66,
         /// <summary>Host→Client: force-freeze/unfreeze the remote player's world for NPC dialog.</summary>
-        DialogFreeze = 67
+        DialogFreeze = 67,
+        /// <summary>Either peer: a player placed a marker on the map at a world position.</summary>
+        MapMarker = 68,
+        /// <summary>Either peer: a MapElement was discovered (isOnMap set to true).</summary>
+        MapElementDiscovered = 69,
+        /// <summary>Either peer: an oxygentank_empty was acquired; stash a copy in the Workbench.</summary>
+        OxygenTankStash = 70,
+        /// <summary>Either peer: the compressor converted an empty tank to a full one.</summary>
+        CompressorTankConvert = 71,
+        /// <summary>Either peer: a player removed a map marker.</summary>
+        MapMarkerRemove = 72,
+        /// <summary>Host→Client: bulk-sync all journal entries on connection.</summary>
+        JournalBulkSync = 73,
+        /// <summary>Host→Client: continuous state update for a shadow (position, distanceToPlayer, alive/dead).</summary>
+        ShadowStateUpdate = 74,
+        /// <summary>Client→Host: request the current state of a container inventory.</summary>
+        ContainerStateRequest = 75,
+        /// <summary>Host→Client: full container inventory state snapshot.</summary>
+        ContainerStateSync = 76,
+        /// <summary>Host→Client: synchronize NPC reputation for non-morning-trader NPCs.</summary>
+        ReputationSync = 77
     }
 
     /// <summary>
@@ -418,18 +438,16 @@ namespace DarkwoodMultiplayer.Networking
     }
 
     /// <summary>
-    /// Either peer: a dream sequence started. The dreamer sends this to the
-    /// remote so the remote can freeze the world and enter spectator mode.
-    /// For epilogue dreams, the remote does not freeze (both participate).
+    /// Either peer: a dream sequence started. The dreamer sends this so the
+    /// remote can freeze the world and enter spectator mode.
+    /// For dual-presence dreams, the remote does not freeze (both participate).
     /// Includes the dream location's world position so the remote can place
     /// the dream scene at the same coordinates for camera alignment.
     /// </summary>
     public struct DreamStartedMessage
     {
-        /// <summary>Name of the dream preset (e.g. "dream_tutorial_00", "epilog_part1a_dream").</summary>
+        /// <summary>Name of the dream preset (e.g. "dream_tutorial_00", "dream_onechance_01_2").</summary>
         public string PresetName;
-        /// <summary>True if this is the epilogue dream (both players participate).</summary>
-        public bool IsEpilogue;
         /// <summary>World X position of the dream location on the dreamer's machine.</summary>
         public float LocPosX;
         /// <summary>World Y position of the dream location on the dreamer's machine.</summary>
@@ -440,7 +458,6 @@ namespace DarkwoodMultiplayer.Networking
         public void Serialize(NetWriter w)
         {
             w.Put(PresetName ?? "");
-            w.Put(IsEpilogue);
             w.Put(LocPosX);
             w.Put(LocPosY);
             w.Put(LocPosZ);
@@ -449,7 +466,6 @@ namespace DarkwoodMultiplayer.Networking
         public static DreamStartedMessage Deserialize(NetReader r) => new DreamStartedMessage
         {
             PresetName = r.GetString(),
-            IsEpilogue = r.GetBool(),
             LocPosX = r.GetFloat(),
             LocPosY = r.GetFloat(),
             LocPosZ = r.GetFloat()
@@ -970,11 +986,12 @@ namespace DarkwoodMultiplayer.Networking
     }
 
     /// <summary>
-    /// Sent when a player attacks an entity, identifying the target by a name hash.
+    /// Sent when a player attacks an entity, identifying the target by stable ID
+    /// with a position+name fallback for non-host-synced entities.
     /// </summary>
     public struct PlayerAttackMessage
     {
-        /// <summary>Hash of the target entity's name for identification.</summary>
+        /// <summary>Stable network ID of the target (0 if unknown / client-local).</summary>
         public short TargetNameHash;
         /// <summary>Amount of damage dealt.</summary>
         public int Damage;
@@ -984,6 +1001,14 @@ namespace DarkwoodMultiplayer.Networking
         public float AttackerPosY;
         /// <summary>Attacker world position Z at time of attack.</summary>
         public float AttackerPosZ;
+        /// <summary>Target entity name (for fallback position+name lookup on host).</summary>
+        public string TargetName;
+        /// <summary>Target world position X (on the sender's machine).</summary>
+        public float TargetPosX;
+        /// <summary>Target world position Y.</summary>
+        public float TargetPosY;
+        /// <summary>Target world position Z.</summary>
+        public float TargetPosZ;
 
         /// <summary>Serializes this message into the provided writer.</summary>
         public void Serialize(NetWriter w)
@@ -991,6 +1016,8 @@ namespace DarkwoodMultiplayer.Networking
             w.Put(TargetNameHash);
             w.Put(Damage);
             w.Put(AttackerPosX); w.Put(AttackerPosY); w.Put(AttackerPosZ);
+            w.Put(TargetName ?? "");
+            w.Put(TargetPosX); w.Put(TargetPosY); w.Put(TargetPosZ);
         }
 
         /// <summary>Deserializes a PlayerAttackMessage from the provided reader.</summary>
@@ -998,7 +1025,9 @@ namespace DarkwoodMultiplayer.Networking
         {
             TargetNameHash = r.GetShort(),
             Damage = r.GetInt(),
-            AttackerPosX = r.GetFloat(), AttackerPosY = r.GetFloat(), AttackerPosZ = r.GetFloat()
+            AttackerPosX = r.GetFloat(), AttackerPosY = r.GetFloat(), AttackerPosZ = r.GetFloat(),
+            TargetName = r.GetString(),
+            TargetPosX = r.GetFloat(), TargetPosY = r.GetFloat(), TargetPosZ = r.GetFloat()
         };
     }
 
@@ -1152,7 +1181,9 @@ namespace DarkwoodMultiplayer.Networking
         /// <summary>Place an item into the container.</summary>
         PlaceItem = 1,
         /// <summary>Remove an item from a slot.</summary>
-        RemoveItem = 2
+        RemoveItem = 2,
+        /// <summary>Mark a container as searched (opened/looted).</summary>
+        Searched = 3
     }
 
     /// <summary>
@@ -1205,6 +1236,106 @@ namespace DarkwoodMultiplayer.Networking
             Durability = r.GetFloat(),
             Ammo = r.GetInt(),
             IsPlayerPlaced = r.GetBool()
+        };
+    }
+
+    /// <summary>
+    /// Client→Host: request the current inventory state of a container.
+    /// The host responds with ContainerStateSync.
+    /// </summary>
+    public struct ContainerStateRequestMessage
+    {
+        public float PosX, PosY, PosZ;
+
+        public void Serialize(NetWriter w) { w.Put(PosX); w.Put(PosY); w.Put(PosZ); }
+        public static ContainerStateRequestMessage Deserialize(NetReader r) => new ContainerStateRequestMessage
+        {
+            PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat()
+        };
+    }
+
+    /// <summary>
+    /// Host→Client: full state of one container slot.
+    /// </summary>
+    public struct SlotStateEntry
+    {
+        public byte SlotIndex;
+        public string ItemType;
+        public int Amount;
+        public float Durability;
+        public int Ammo;
+    }
+
+    /// <summary>
+    /// Host→Client: full inventory state snapshot of a container.
+    /// Sent in response to ContainerStateRequest or when the host opens
+    /// a container so the client gets the authoritative slot layout.
+    /// </summary>
+    public struct ContainerStateSyncMessage
+    {
+        public float PosX, PosY, PosZ;
+        public int SlotCount;
+        public SlotStateEntry[] Slots;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(PosX); w.Put(PosY); w.Put(PosZ);
+            w.Put(SlotCount);
+            for (int i = 0; i < SlotCount; i++)
+            {
+                w.Put(Slots[i].SlotIndex);
+                w.Put(Slots[i].ItemType ?? "");
+                w.Put(Slots[i].Amount);
+                w.Put(Slots[i].Durability);
+                w.Put(Slots[i].Ammo);
+            }
+        }
+
+        public static ContainerStateSyncMessage Deserialize(NetReader r)
+        {
+            var msg = new ContainerStateSyncMessage
+            {
+                PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat(),
+                SlotCount = r.GetInt()
+            };
+            msg.Slots = new SlotStateEntry[msg.SlotCount];
+            for (int i = 0; i < msg.SlotCount; i++)
+            {
+                msg.Slots[i] = new SlotStateEntry
+                {
+                    SlotIndex = r.GetByte(),
+                    ItemType = r.GetString(),
+                    Amount = r.GetInt(),
+                    Durability = r.GetFloat(),
+                    Ammo = r.GetInt()
+                };
+            }
+            return msg;
+        }
+    }
+
+    /// <summary>
+    /// Host→Client: synchronize NPC reputation for non-morning-trader NPCs.
+    /// Morning trader reputation (isNightTrader==true) stays per-player.
+    /// Other NPC reputation is shared (host→client authoritative).
+    /// </summary>
+    public struct ReputationSyncMessage
+    {
+        /// <summary>NPC name (matching npc.name / Flags.npcState name).</summary>
+        public string NpcName;
+        /// <summary>Authoritative reputation value from host.</summary>
+        public int Reputation;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(NpcName ?? "");
+            w.Put(Reputation);
+        }
+
+        public static ReputationSyncMessage Deserialize(NetReader r) => new ReputationSyncMessage
+        {
+            NpcName = r.GetString(),
+            Reputation = r.GetInt()
         };
     }
 
@@ -1894,19 +2025,59 @@ namespace DarkwoodMultiplayer.Networking
     /// <summary>Host→Client: a single shadow spawned at a specific world position on the host.</summary>
     public struct ShadowSpawnMessage
     {
+        public short ShadowId;
+        public byte ShadowType; // 0 = regular, 1 = immortal
         public float PosX, PosY, PosZ;
         public float RotY;
+        public float DistanceToPlayer;
+        public byte Flags; // bit 0 = alive, bit 1 = dead
 
         public void Serialize(NetWriter w)
         {
+            w.Put(ShadowId);
+            w.Put(ShadowType);
             w.Put(PosX); w.Put(PosY); w.Put(PosZ);
             w.Put(RotY);
+            w.Put(DistanceToPlayer);
+            w.Put(Flags);
         }
 
         public static ShadowSpawnMessage Deserialize(NetReader r) => new ShadowSpawnMessage
         {
+            ShadowId = r.GetShort(),
+            ShadowType = r.GetByte(),
             PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat(),
-            RotY = r.GetFloat()
+            RotY = r.GetFloat(),
+            DistanceToPlayer = r.GetFloat(),
+            Flags = r.GetByte()
+        };
+    }
+
+    /// <summary>Host→Client: continuous state update for a single shadow (position, distance, alive/dead).</summary>
+    public struct ShadowStateUpdateMessage
+    {
+        public short ShadowId;
+        public float PosX, PosY, PosZ;
+        public float RotY;
+        public float DistanceToPlayer;
+        public byte Flags; // bit 0 = alive, bit 1 = dead
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(ShadowId);
+            w.Put(PosX); w.Put(PosY); w.Put(PosZ);
+            w.Put(RotY);
+            w.Put(DistanceToPlayer);
+            w.Put(Flags);
+        }
+
+        public static ShadowStateUpdateMessage Deserialize(NetReader r) => new ShadowStateUpdateMessage
+        {
+            ShadowId = r.GetShort(),
+            PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat(),
+            RotY = r.GetFloat(),
+            DistanceToPlayer = r.GetFloat(),
+            Flags = r.GetByte()
         };
     }
 
@@ -2286,5 +2457,152 @@ namespace DarkwoodMultiplayer.Networking
         {
             Frozen = r.GetBool()
         };
+    }
+
+    /// <summary>
+    /// Either peer: a player placed a marker on the map at a world position.
+    /// The receiving peer creates a visual marker on their map so both players
+    /// can see where the other is pointing.
+    /// </summary>
+    public struct MapMarkerMessage
+    {
+        /// <summary>World position X where the marker was placed.</summary>
+        public float PosX;
+        /// <summary>World position Y where the marker was placed.</summary>
+        public float PosY;
+        /// <summary>World position Z where the marker was placed.</summary>
+        public float PosZ;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(PosX);
+            w.Put(PosY);
+            w.Put(PosZ);
+        }
+
+        public static MapMarkerMessage Deserialize(NetReader r) => new MapMarkerMessage
+        {
+            PosX = r.GetFloat(),
+            PosY = r.GetFloat(),
+            PosZ = r.GetFloat()
+        };
+    }
+
+    /// <summary>
+    /// Either peer: a player removed (right-clicked) a previously placed map marker.
+    /// The receiving peer removes the corresponding marker from their map.
+    /// </summary>
+    public struct MapMarkerRemoveMessage
+    {
+        /// <summary>World position X of the removed marker.</summary>
+        public float PosX;
+        /// <summary>World position Y of the removed marker.</summary>
+        public float PosY;
+        /// <summary>World position Z of the removed marker.</summary>
+        public float PosZ;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(PosX);
+            w.Put(PosY);
+            w.Put(PosZ);
+        }
+
+        public static MapMarkerRemoveMessage Deserialize(NetReader r) => new MapMarkerRemoveMessage
+        {
+            PosX = r.GetFloat(),
+            PosY = r.GetFloat(),
+            PosZ = r.GetFloat()
+        };
+    }
+
+    /// <summary>
+    /// Either peer: a MapElement was discovered by one player (isOnMap set to true).
+    /// The receiving peer calls Map.showElement(elementName) so the location appears
+    /// on both maps.
+    /// </summary>
+    public struct MapElementDiscoveredMessage
+    {
+        /// <summary>The elementName of the discovered MapElement.</summary>
+        public string ElementName;
+
+        public void Serialize(NetWriter w) => w.Put(ElementName ?? "");
+
+        public static MapElementDiscoveredMessage Deserialize(NetReader r) => new MapElementDiscoveredMessage
+        {
+            ElementName = r.GetString()
+        };
+    }
+
+    /// <summary>
+    /// Either peer: an oxygentank_empty was acquired; tells the remote peer to also
+    /// add a copy to the Workbench stash so both players can access it.
+    /// </summary>
+    public struct OxygenTankStashMessage
+    {
+        public void Serialize(NetWriter w) { }
+
+        public static OxygenTankStashMessage Deserialize(NetReader r) => new OxygenTankStashMessage();
+    }
+
+    /// <summary>
+    /// Either peer: the compressor converted an oxygentank_empty to oxygentank_full.
+    /// The receiving peer also converts one empty tank to a full one in their inventory.
+    /// </summary>
+    public struct CompressorTankConvertMessage
+    {
+        public void Serialize(NetWriter w) { }
+
+        public static CompressorTankConvertMessage Deserialize(NetReader r) => new CompressorTankConvertMessage();
+    }
+
+    /// <summary>
+    /// Host→Client: bulk-sync all existing journal entries on connection so the
+    /// client's journal reflects the host's pre-existing notes, keys, quest items,
+    /// and journal entries from prior days.
+    /// </summary>
+    public struct JournalBulkSyncMessage
+    {
+        /// <summary>Note type keys (journal.notesDict keys).</summary>
+        public string[] NoteTypes;
+        /// <summary>Key type keys (journal.keysDict keys).</summary>
+        public string[] KeyTypes;
+        /// <summary>Quest item type keys (journal.itemsDict keys).</summary>
+        public string[] QuestItemTypes;
+        /// <summary>Journal entry type keys (journal.journalEntriesDict keys).</summary>
+        public string[] JournalEntryTypes;
+
+        public void Serialize(NetWriter w)
+        {
+            WriteArray(w, NoteTypes);
+            WriteArray(w, KeyTypes);
+            WriteArray(w, QuestItemTypes);
+            WriteArray(w, JournalEntryTypes);
+        }
+
+        public static JournalBulkSyncMessage Deserialize(NetReader r) => new JournalBulkSyncMessage
+        {
+            NoteTypes = ReadArray(r),
+            KeyTypes = ReadArray(r),
+            QuestItemTypes = ReadArray(r),
+            JournalEntryTypes = ReadArray(r)
+        };
+
+        private static void WriteArray(NetWriter w, string[] arr)
+        {
+            int count = arr?.Length ?? 0;
+            w.Put(count);
+            for (int i = 0; i < count; i++)
+                w.Put(arr?[i] ?? "");
+        }
+
+        private static string[] ReadArray(NetReader r)
+        {
+            int count = r.GetInt();
+            var arr = new string[count];
+            for (int i = 0; i < count; i++)
+                arr[i] = r.GetString();
+            return arr;
+        }
     }
 }

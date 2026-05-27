@@ -28,8 +28,9 @@ namespace DarkwoodMultiplayer.Networking
         private const float SnapshotInterval = 0.1f;
         private const float MaxInterpDelay = 0.3f;
         private const float PendingMatchTimeout = 0.5f;
-        private const float MatchRadius = 8f;
+        private const float MatchRadius = 15f;
         private const float PhantomCleanupDelay = 5f;
+        private const float UnmatchedCleanupDelay = 5f;
 
         private static int _lastApplyCount;
         private static int _lastSkippedCount;
@@ -39,6 +40,9 @@ namespace DarkwoodMultiplayer.Networking
 
         private static readonly HashSet<short> _hostSyncedIds = new HashSet<short>();
         private static readonly HashSet<short> _spawnedPhantomIds = new HashSet<short>();
+        private static readonly HashSet<short> _audioStoppedIds = new HashSet<short>();
+        private static readonly HashSet<short> _everHostSyncedIds = new HashSet<short>();
+        private static readonly Dictionary<Character, float> _unmatchedSince = new Dictionary<Character, float>(64);
         private static bool _receivedFirstSnapshot;
 
         /// <summary>Whether at least one entity snapshot has been received from the host.</summary>
@@ -82,6 +86,7 @@ namespace DarkwoodMultiplayer.Networking
             }
 
             _receivedFirstSnapshot = true;
+            _firstSnapshotTime = Time.time;
 
             int applied = 0;
             int skipped = 0;
@@ -112,13 +117,17 @@ namespace DarkwoodMultiplayer.Networking
                         // If the matched entity is a phantom, check if a real local entity
                         // now exists nearby (e.g. world chunk just loaded). If so, replace
                         // the phantom with the real entity to avoid duplicates.
+                        // IMPORTANT: exclude the phantom's own ID from the search so
+                        // FindByPositionAndName doesn't return the phantom itself.
                         if (_spawnedPhantomIds.Contains(e.Index))
                         {
-                            Character real = CharacterTracker.FindByPositionAndName(targetPos, e.EntityName, MatchRadius, _hostSyncedIds);
-                            if (real != null && real != c)
+                            HashSet<short> exclude = new HashSet<short>(_hostSyncedIds) { e.Index };
+                            Character real = CharacterTracker.FindByPositionAndName(targetPos, e.EntityName, MatchRadius, exclude);
+                            if (real != null)
                             {
                                 CharacterTracker.AssignId(real, e.Index);
                                 _hostSyncedIds.Add(e.Index);
+                                _everHostSyncedIds.Add(e.Index);
                                 _spawnedPhantomIds.Remove(e.Index);
                                 Object.Destroy(c.gameObject);
                                 c = real;
@@ -126,6 +135,7 @@ namespace DarkwoodMultiplayer.Networking
                             }
                         }
                         _hostSyncedIds.Add(e.Index);
+                        _everHostSyncedIds.Add(e.Index);
                         UpdateInterpolation(c, e, targetPos, ref applied);
                         continue;
                     }
@@ -142,6 +152,7 @@ namespace DarkwoodMultiplayer.Networking
                 {
                     CharacterTracker.AssignId(c, e.Index);
                     _hostSyncedIds.Add(e.Index);
+                    _everHostSyncedIds.Add(e.Index);
                     EnsureEntityAwake(c);
                     ModRuntime.Log?.LogInfo($"[ClientEntitySync] matched by position: {e.EntityName}(id={e.Index}) at ({targetPos.x:F1},{targetPos.z:F1})");
                     UpdateInterpolation(c, e, targetPos, ref applied);
@@ -197,6 +208,17 @@ namespace DarkwoodMultiplayer.Networking
         {
             EnsureEntityAwake(c);
 
+            // Stop all AudioSources on first snapshot — the host is authoritative
+            // for AI-managed sounds (growling, hissing, etc.) and the client's AI
+            // is disabled, so looping sounds started before AI was disabled would
+            // play forever.
+            if (_audioStoppedIds.Add(e.Index))
+            {
+                AudioSource[] srcs = c.GetComponentsInChildren<AudioSource>(true);
+                for (int si = 0; si < srcs.Length; si++)
+                    srcs[si].Stop();
+            }
+
             if (!_states.TryGetValue(e.Index, out var state))
             {
                 state = new EntityInterpState { isFirst = true };
@@ -218,10 +240,23 @@ namespace DarkwoodMultiplayer.Networking
             state.arrivalTime = Time.time;
             state.hasTarget = true;
 
-            if (!string.IsNullOrEmpty(e.Clip))
+            if (!e.Alive && c.alive)
             {
-                tk2dSpriteAnimator anim = c.GetComponent<tk2dSpriteAnimator>();
-                if (anim != null)
+                ModRuntime.Log?.LogInfo($"[ClientEntityInterpolation] DETECTED DEATH: {c.name}(id={e.Index})");
+                c.die();
+            }
+
+            state.alive = e.Alive;
+
+            // Drive animation from snapshot for all entities (alive or dead).
+            // On the host, the death animation is started by the AI components
+            // (Enemy_Basic/Enemy_Dog) in their Update when they detect alive=false.
+            // On the client those components are disabled, so c.die() alone won't
+            // start the death animation — we must play the clip ourselves.
+            tk2dSpriteAnimator anim = c.GetComponent<tk2dSpriteAnimator>();
+            if (anim != null)
+            {
+                if (!string.IsNullOrEmpty(e.Clip))
                 {
                     bool clipChanged = anim.CurrentClip == null || anim.CurrentClip.name != e.Clip;
                     if (clipChanged && anim.GetClipByName(e.Clip) != null)
@@ -234,24 +269,15 @@ namespace DarkwoodMultiplayer.Networking
                             anim.SetFrame(Mathf.Clamp(e.ClipFrame, 0, maxFrame), false);
                     }
                 }
-            }
-            else
-            {
-                tk2dSpriteAnimator anim = c.GetComponent<tk2dSpriteAnimator>();
-                if (anim != null && !anim.Playing)
+                else if (c.alive && !anim.Playing)
                 {
+                    // Idle fallback for alive entities only — dead ones freeze
+                    // on their last death frame (or whatever the snapshot supplies).
                     string idleClip = Traverse.Create(c).Field("idleAni").GetValue<string>();
                     if (!string.IsNullOrEmpty(idleClip) && anim.GetClipByName(idleClip) != null)
                         anim.Play(idleClip);
                 }
             }
-
-            if (!e.Alive && state.alive)
-            {
-                if (c.alive)
-                    c.die();
-            }
-            state.alive = e.Alive;
 
             applied++;
         }
@@ -271,6 +297,7 @@ namespace DarkwoodMultiplayer.Networking
                 {
                     CharacterTracker.AssignId(c, p.HostId);
                     _hostSyncedIds.Add(p.HostId);
+                    _everHostSyncedIds.Add(p.HostId);
                     EnsureEntityAwake(c);
                     ModRuntime.Log?.LogInfo($"[ClientEntitySync] pending matched (tight): {p.EntityName}(id={p.HostId})");
 
@@ -293,54 +320,36 @@ namespace DarkwoodMultiplayer.Networking
                     state.hasTarget = true;
                     state.alive = p.Alive;
 
+                    if (!p.Alive && c.alive)
+                        c.die();
+
                     _pendingMatches.RemoveAt(i);
                     continue;
                 }
 
-                // Fallback: name-only match (unlimited distance).
-                // Catches entities far away (e.g. in an unloaded chunk) that
-                // share the same name but are outside the tight MatchRadius.
-                if (!string.IsNullOrEmpty(p.EntityName))
+                // Timeout — first try to find and activate a real (inactive) entity,
+                // then fall back to spawning a phantom.
+                if (now - p.TimeAdded > PendingMatchTimeout)
                 {
-                    Character best = null;
-                    float bestDistSq = float.MaxValue;
-
-                    Character[] all = CharacterTracker.GetAll();
-                    for (int ci = 0; ci < all.Length; ci++)
+                    if (_hostSyncedIds.Contains(p.HostId))
                     {
-                        Character candidate = all[ci];
-                        if (candidate == null) continue;
-
-                        // Skip if this character already has the host ID
-                        if (CharacterTracker.TryGetStableId(candidate, out short existingId) && existingId == p.HostId)
-                            continue;
-
-                        string cname = candidate.name;
-                        if (cname.EndsWith("(Clone)"))
-                            cname = cname.Substring(0, cname.Length - 7);
-
-                        if (!string.Equals(cname, p.EntityName, System.StringComparison.OrdinalIgnoreCase))
-                            continue;
-
-                        // Skip if this character is already host-synced under a different ID
-                        if (CharacterTracker.TryGetStableId(candidate, out short otherId) && _hostSyncedIds.Contains(otherId))
-                            continue;
-
-                        float dsq = (candidate.transform.position - p.Position).sqrMagnitude;
-                        if (dsq < bestDistSq)
-                        {
-                            bestDistSq = dsq;
-                            best = candidate;
-                        }
+                        ModRuntime.Log?.LogInfo($"[ClientEntitySync] dropping pending (already host-synced): {p.EntityName}(id={p.HostId})");
+                        _pendingMatches.RemoveAt(i);
+                        continue;
                     }
 
-                    if (best != null)
+                    // Try to find an inactive character in the scene with matching name.
+                    // This avoids creating duplicates for save-related entities that
+                    // exist on the client but are deactivated by WorldGrid culling.
+                    Character inactive = FindInactiveCharacter(p.EntityName, p.Position, MatchRadius * 2f);
+                    if (inactive != null)
                     {
-                        ModRuntime.Log?.LogInfo($"[ClientEntitySync] pending matched (name-only): {p.EntityName}(id={p.HostId}) dist={Mathf.Sqrt(bestDistSq):F1}");
-                        c = best;
-                        CharacterTracker.AssignId(c, p.HostId);
+                        CharacterTracker.Add(inactive);
+                        CharacterTracker.AssignId(inactive, p.HostId);
                         _hostSyncedIds.Add(p.HostId);
-                        EnsureEntityAwake(c);
+                        _everHostSyncedIds.Add(p.HostId);
+                        EnsureEntityAwake(inactive);
+                        ModRuntime.Log?.LogInfo($"[ClientEntitySync] activated existing entity: {p.EntityName}(id={p.HostId})");
 
                         if (!_states.TryGetValue(p.HostId, out var state))
                         {
@@ -349,31 +358,21 @@ namespace DarkwoodMultiplayer.Networking
                         }
                         state.staleSince = 0f;
 
-                        _displayPositions[p.HostId] = c.transform.position;
-                        _displayRotations[p.HostId] = c.transform.eulerAngles.y;
+                        _displayPositions[p.HostId] = inactive.transform.position;
+                        _displayRotations[p.HostId] = inactive.transform.eulerAngles.y;
                         state.isFirst = false;
 
-                        state.previousPosition = c.transform.position;
-                        state.previousRotY = c.transform.eulerAngles.y;
+                        state.previousPosition = inactive.transform.position;
+                        state.previousRotY = inactive.transform.eulerAngles.y;
                         state.targetPosition = p.Position;
                         state.targetRotY = p.RotY;
                         state.arrivalTime = now;
                         state.hasTarget = true;
                         state.alive = p.Alive;
 
-                        _pendingMatches.RemoveAt(i);
-                        continue;
-                    }
-                }
+                        if (!p.Alive && inactive.alive)
+                            inactive.die();
 
-                // Timeout — spawn on-demand
-                if (now - p.TimeAdded > PendingMatchTimeout)
-                {
-                    // If we already spawned a phantom for this host ID (subsequently
-                    // destroyed by world cleanup), don't spawn another — just drop it.
-                    if (_hostSyncedIds.Contains(p.HostId))
-                    {
-                        ModRuntime.Log?.LogInfo($"[ClientEntitySync] dropping pending (already host-synced): {p.EntityName}(id={p.HostId})");
                         _pendingMatches.RemoveAt(i);
                         continue;
                     }
@@ -383,6 +382,7 @@ namespace DarkwoodMultiplayer.Networking
                     {
                         CharacterTracker.AssignId(c, p.HostId);
                         _hostSyncedIds.Add(p.HostId);
+                        _everHostSyncedIds.Add(p.HostId);
                         _spawnedPhantomIds.Add(p.HostId);
                         EnsureEntityAwake(c);
                         ModRuntime.Log?.LogInfo($"[ClientEntitySync] pending spawned: {p.EntityName}(id={p.HostId})");
@@ -406,6 +406,9 @@ namespace DarkwoodMultiplayer.Networking
                         state.arrivalTime = now;
                         state.hasTarget = true;
                         state.alive = p.Alive;
+
+                        if (!p.Alive && c.alive)
+                            c.die();
                     }
 
                     _pendingMatches.RemoveAt(i);
@@ -504,7 +507,59 @@ namespace DarkwoodMultiplayer.Networking
             {
                 _states.Remove(_staleKeys[i]);
             }
+
+            // 3. Clean up unmatched client-only entities
+            // After receiving the first host snapshot + grace period, destroy any
+            // character that exists only on the client (not in host's save/night spawns).
+            // This prevents ghost entities when host and client have divergent saves.
+            if (!_receivedFirstSnapshot) return;
+            if (now - _firstSnapshotTime < UnmatchedCleanupDelay) return;
+
+            Player localPlayer = Player.Instance;
+            Character[] allChars = CharacterTracker.GetAll();
+            for (int i = 0; i < allChars.Length; i++)
+            {
+                Character c = allChars[i];
+                if (c == null) continue;
+
+                // Never destroy the local player or phantoms
+                if (c == localPlayer || c.name.Contains("RemotePlayer"))
+                    continue;
+
+                if (!CharacterTracker.TryGetStableId(c, out short sid))
+                    continue;
+
+                // Skip if ever synced by the host (even if currently stale)
+                if (_everHostSyncedIds.Contains(sid))
+                {
+                    _unmatchedSince.Remove(c);
+                    continue;
+                }
+
+                // Also skip if currently host-synced
+                if (_hostSyncedIds.Contains(sid))
+                {
+                    _unmatchedSince.Remove(c);
+                    continue;
+                }
+
+                // Track how long this character has been unmatched
+                if (!_unmatchedSince.TryGetValue(c, out float firstSeen))
+                {
+                    _unmatchedSince[c] = now;
+                    continue;
+                }
+
+                if (now - firstSeen > UnmatchedCleanupDelay)
+                {
+                    ModRuntime.Log?.LogInfo($"[ClientEntitySync] destroying unmatched entity: {c.name}(sid={sid})");
+                    _unmatchedSince.Remove(c);
+                    Object.Destroy(c.gameObject);
+                }
+            }
         }
+
+        private static float _firstSnapshotTime;
 
         private static void EnsureEntityAwake(Character c)
         {
@@ -538,6 +593,58 @@ namespace DarkwoodMultiplayer.Networking
 
             // Rigidbody left non-kinematic so the client player can push entities via physics.
             // Host snapshots drive position via Rigidbody.MovePosition, which respects collisions.
+        }
+
+        /// <summary>
+        /// Searches the entire scene (including inactive GameObjects) for a character
+        /// whose name matches <paramref name="entityName"/> within <paramref name="radius"/>
+        /// of <paramref name="position"/>.  This avoids spawning phantom duplicates when
+        /// a save-related entity exists in the scene but is deactivated by WorldGrid culling.
+        /// </summary>
+        private static Character FindInactiveCharacter(string entityName, Vector3 position, float radius)
+        {
+            string searchName = entityName;
+            if (searchName.EndsWith("(Clone)"))
+                searchName = searchName.Substring(0, searchName.Length - 7);
+
+            // findObjectsOfType includes ALL loaded Characters, even inactive ones.
+            // Guard: only search if there are pending entities; this is called at most
+            // once per entity before spawning.
+            Character[] all = GameObject.FindObjectsOfType<Character>(true);
+            float radiusSq = radius * radius;
+            Character best = null;
+            float bestDistSq = float.MaxValue;
+
+            for (int i = 0; i < all.Length; i++)
+            {
+                Character c = all[i];
+                if (c == null) continue;
+
+                // Skip the local player and remote proxy
+                if (c.name.Contains("Player"))
+                    continue;
+
+                // Skip if already host-synced or a phantom
+                if (CharacterTracker.TryGetStableId(c, out short sid))
+                {
+                    if (_hostSyncedIds.Contains(sid) || _spawnedPhantomIds.Contains(sid))
+                        continue;
+                }
+
+                string cname = c.name;
+                if (cname.EndsWith("(Clone)"))
+                    cname = cname.Substring(0, cname.Length - 7);
+                if (!string.Equals(cname, searchName, System.StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                float dSq = (c.transform.position - position).sqrMagnitude;
+                if (dSq < radiusSq && dSq < bestDistSq)
+                {
+                    bestDistSq = dSq;
+                    best = c;
+                }
+            }
+            return best;
         }
 
         private static Character SpawnEntityLocally(string entityName, string prefabPath, Vector3 position, float rotY)
@@ -590,12 +697,16 @@ namespace DarkwoodMultiplayer.Networking
             _displayRotations.Clear();
             _hostSyncedIds.Clear();
             _spawnedPhantomIds.Clear();
+            _audioStoppedIds.Clear();
+            _everHostSyncedIds.Clear();
+            _unmatchedSince.Clear();
             _pendingMatches.Clear();
             _lastApplyCount = 0;
             _lastSkippedCount = 0;
             _totalApplied = 0;
             _totalSkipped = 0;
             _receivedFirstSnapshot = false;
+            _firstSnapshotTime = 0f;
         }
 
         public static void LogStats()

@@ -133,4 +133,34 @@ namespace DarkwoodMultiplayer.Patches
                 PauseSuppression.SuppressUnpause--;
         }
     }
+
+    [HarmonyPatch(typeof(Padlock), "activate")]
+    internal static class PadlockActivateNoPausePatch
+    {
+        private static void Prefix()
+        {
+            if (ModRuntime.Network != null)
+                PauseSuppression.SuppressPause++;
+        }
+        private static void Postfix()
+        {
+            if (ModRuntime.Network != null)
+                PauseSuppression.SuppressPause--;
+        }
+    }
+
+    [HarmonyPatch(typeof(Padlock), "deactivate")]
+    internal static class PadlockDeactivateNoUnpausePatch
+    {
+        private static void Prefix()
+        {
+            if (ModRuntime.Network != null)
+                PauseSuppression.SuppressUnpause++;
+        }
+        private static void Postfix()
+        {
+            if (ModRuntime.Network != null)
+                PauseSuppression.SuppressUnpause--;
+        }
+    }
 }

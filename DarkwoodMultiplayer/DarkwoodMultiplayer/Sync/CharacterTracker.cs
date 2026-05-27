@@ -113,6 +113,48 @@ namespace DarkwoodMultiplayer.Sync
             return best;
         }
 
+        /// <summary>
+        /// Finds the closest character whose name matches <paramref name="name"/>
+        /// near <paramref name="pos"/>, with no distance limit.
+        /// Excludes characters already in the <paramref name="excludeIds"/> set.
+        /// Intended as a fallback when AI divergence makes radius-based search unreliable.
+        /// </summary>
+        public static Character FindClosestByName(string name, Vector3 pos, HashSet<short> excludeIds = null)
+        {
+            string searchName = name;
+            if (searchName.EndsWith("(Clone)"))
+                searchName = searchName.Substring(0, searchName.Length - 7);
+
+            Character best = null;
+            float bestDistSq = float.MaxValue;
+
+            lock (_lock)
+            {
+                for (int i = 0; i < _characters.Count; i++)
+                {
+                    Character c = _characters[i];
+                    if (c == null) continue;
+
+                    if (excludeIds != null && _stableIdCache.TryGetValue(c, out short sid) && excludeIds.Contains(sid))
+                        continue;
+
+                    string cName = c.name;
+                    if (cName.EndsWith("(Clone)"))
+                        cName = cName.Substring(0, cName.Length - 7);
+                    if (!string.Equals(cName, searchName, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    float dSq = (c.transform.position - pos).sqrMagnitude;
+                    if (dSq < bestDistSq)
+                    {
+                        bestDistSq = dSq;
+                        best = c;
+                    }
+                }
+            }
+            return best;
+        }
+
         /// <summary>Assigns a specific stable ID (from the host) to the given character on a client.</summary>
         public static void AssignId(Character c, short id)
         {

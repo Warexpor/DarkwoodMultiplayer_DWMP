@@ -18,7 +18,6 @@ namespace DarkwoodMultiplayer.Players
         private Light2D _fovDot;
         private Light2D _lightDot;
         private Light2D _flashlight;
-        private GameObject _shadow;
 
         private PlayerVisionController(GameObject root)
         {
@@ -42,10 +41,6 @@ namespace DarkwoodMultiplayer.Players
             _fovDot = FindLight(root, "PlayerFOVLightDot");
             _lightDot = FindLight(root, "PlayerLightDot");
             _flashlight = FindLight(root, "Flashlight");
-
-            Transform shadow = root.Find("Shadow");
-            if (shadow != null)
-                _shadow = shadow.gameObject;
         }
 
         private static Light2D FindLight(Transform root, string childName)
@@ -55,7 +50,10 @@ namespace DarkwoodMultiplayer.Players
         }
 
         /// <summary>
-        /// Matches Player.switchVisibilty: shadow + ambient dot + FOV logic cone.
+        /// Enables/disables the FOV cone and ambient dot lights on the proxy.
+        /// NOTE: the ground shadow ("Shadow" child) is intentionally excluded —
+        /// it is toggled separately so that exiting spectator mode doesn't
+        /// permanently hide the shadow.
         /// </summary>
         public void SetVisionConeEnabled(bool enabled)
         {
@@ -70,9 +68,6 @@ namespace DarkwoodMultiplayer.Players
 
             if (_lightDot != null)
                 _lightDot.gameObject.SetActive(enabled);
-
-            if (_shadow != null)
-                _shadow.SetActive(enabled);
         }
 
         /// <summary>

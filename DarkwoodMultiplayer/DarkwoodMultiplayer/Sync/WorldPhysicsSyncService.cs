@@ -204,17 +204,30 @@ namespace DarkwoodMultiplayer.Sync
                 Vector3 key = new Vector3((float)Math.Round(dp.x, 1), (float)Math.Round(dp.y, 1), (float)Math.Round(dp.z, 1));
 
                 bool opened = TraverseHack.ReadDoorOpened(door);
-                if (!_lastDoorOpen.TryGetValue(key, out bool was) || was != opened)
+
+                float bodyRotY = 0f;
+                Vector3 angVel = Vector3.zero;
+                if (door.body != null)
+                {
+                    bodyRotY = door.body.eulerAngles.y;
+                    Rigidbody rb = door.body.GetComponent<Rigidbody>();
+                    if (rb != null) angVel = rb.angularVelocity;
+                }
+
+                bool stateChanged = !_lastDoorOpen.TryGetValue(key, out bool wasOpened) || wasOpened != opened;
+                bool isMoving = opened && angVel.sqrMagnitude > 0.01f;
+
+                if (stateChanged || isMoving)
                 {
                     _lastDoorOpen[key] = opened;
 
                     if (_doors.Count < 64)
                     {
-                        float bodyRotY = door.body != null ? door.body.eulerAngles.y : 0f;
                         _doors.Add(new DoorState
                         {
                             PosX = key.x, PosY = key.y, PosZ = key.z,
-                            Opened = opened, BodyRotY = bodyRotY
+                            Opened = opened, BodyRotY = bodyRotY,
+                            AngVelX = angVel.x, AngVelY = angVel.y, AngVelZ = angVel.z
                         });
                     }
                 }
@@ -511,7 +524,7 @@ namespace DarkwoodMultiplayer.Sync
                         }
 
                         ModRuntime.Log?.LogInfo("[DoorApply] " + door.name + " " + (ds.Opened ? "OPEN" : "CLOSE") + " from " + fromPeer);
-                        TraverseHack.SetDoorOpened(door, ds.Opened, new Vector3(ds.OpenerPosX, ds.OpenerPosY, ds.OpenerPosZ), ds.OpenForce, ds.BodyRotY);
+                        TraverseHack.SetDoorOpened(door, ds.Opened, new Vector3(ds.OpenerPosX, ds.OpenerPosY, ds.OpenerPosZ), ds.OpenForce, ds.BodyRotY, ds.AngVelX, ds.AngVelY, ds.AngVelZ);
                         doorApplied++;
                     }
                 }
@@ -1545,6 +1558,12 @@ namespace DarkwoodMultiplayer.Sync
         public float OpenForce;
         /// <summary>Y-axis euler angle of the door's body, matching the sender's swing position.</summary>
         public float BodyRotY;
+        /// <summary>X component of door body angular velocity (for swing continuity).</summary>
+        public float AngVelX;
+        /// <summary>Y component of door body angular velocity.</summary>
+        public float AngVelY;
+        /// <summary>Z component of door body angular velocity.</summary>
+        public float AngVelZ;
 
         /// <summary>Serializes this door state into a network writer.</summary>
         /// <param name="w">The network writer.</param>
@@ -1553,6 +1572,7 @@ namespace DarkwoodMultiplayer.Sync
             w.Put(PosX); w.Put(PosY); w.Put(PosZ); w.Put(Opened);
             w.Put(OpenerPosX); w.Put(OpenerPosY); w.Put(OpenerPosZ);
             w.Put(OpenForce); w.Put(BodyRotY);
+            w.Put(AngVelX); w.Put(AngVelY); w.Put(AngVelZ);
         }
         /// <summary>Deserializes a door state from a network reader.</summary>
         /// <param name="r">The network reader.</param>
@@ -1561,7 +1581,8 @@ namespace DarkwoodMultiplayer.Sync
             PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat(),
             Opened = r.GetBool(),
             OpenerPosX = r.GetFloat(), OpenerPosY = r.GetFloat(), OpenerPosZ = r.GetFloat(),
-            OpenForce = r.GetFloat(), BodyRotY = r.GetFloat()
+            OpenForce = r.GetFloat(), BodyRotY = r.GetFloat(),
+            AngVelX = r.GetFloat(), AngVelY = r.GetFloat(), AngVelZ = r.GetFloat()
         };
     }
 
@@ -1712,6 +1733,14 @@ namespace DarkwoodMultiplayer.Sync
         /// </summary>
         public static bool IsInsideLocalExplosion = false;
 
+        /// <summary>
+        /// Set true on client while inside Bullet.onCollide for a player-fired
+        /// projectile (objectThatSpawnedMe == null). ClientDamageRedirectPatch
+        /// checks this to detect projectile weapon damage where the vanilla
+        /// code never sets objectThatSpawnedMe on player bullets.
+        /// </summary>
+        public static bool IsInsidePlayerBulletCollision = false;
+
         /// <summary>Reads the private "opened" field from a Door instance.</summary>
         /// <param name="door">The door instance.</param>
         public static bool ReadDoorOpened(Door door)
@@ -1722,15 +1751,18 @@ namespace DarkwoodMultiplayer.Sync
 
         /// <summary>
         /// Opens or closes a door: invokes the original open/close method via reflection,
-        /// ensures the "opened" field matches, and syncs the door body's rotation
-        /// so the receiver's door swing matches the sender's visual position.
+        /// ensures the "opened" field matches, and syncs the door body's rotation + angular velocity
+        /// so the receiver's door swing matches the sender's physical swing.
         /// </summary>
         /// <param name="door">The door instance.</param>
         /// <param name="opened">True to open, false to close.</param>
         /// <param name="openerPos">Position of the player interacting with the door (used as open origin).</param>
         /// <param name="openForce">Force magnitude from the original open call.</param>
         /// <param name="bodyRotY">Target Y euler angle for the door body to match the sender's swing.</param>
-        public static void SetDoorOpened(Door door, bool opened, Vector3 openerPos = default, float openForce = 0f, float bodyRotY = 0f)
+        /// <param name="angVelX">X component of sender's door body angular velocity.</param>
+        /// <param name="angVelY">Y component of sender's door body angular velocity.</param>
+        /// <param name="angVelZ">Z component of sender's door body angular velocity.</param>
+        public static void SetDoorOpened(Door door, bool opened, Vector3 openerPos = default, float openForce = 0f, float bodyRotY = 0f, float angVelX = 0f, float angVelY = 0f, float angVelZ = 0f)
         {
             InvokeDoorMethod(door, opened ? "open" : "close", openerPos, openForce);
 
@@ -1738,8 +1770,6 @@ namespace DarkwoodMultiplayer.Sync
             if (t.Field("opened").GetValue<bool>() != opened)
                 t.Field("opened").SetValue(opened);
 
-            // Sync the door body's rotation so the receiver matches the sender's
-            // physical swing position.  The body is what actually rotates open/closed.
             if (door.body != null)
             {
                 Rigidbody doorBodyRB = door.body.GetComponent<Rigidbody>();
@@ -1750,18 +1780,24 @@ namespace DarkwoodMultiplayer.Sync
                     if (closeSnap || (opened && bodyRotY != 0f))
                     {
                         Quaternion targetRot = Quaternion.Euler(currentEuler.x, bodyRotY, currentEuler.z);
+                        door.body.rotation = targetRot;
                         if (opened)
                         {
-                            door.body.rotation = targetRot;
                             doorBodyRB.velocity = Vector3.zero;
                             doorBodyRB.angularVelocity = Vector3.zero;
                         }
                         else
                         {
-                            door.body.rotation = targetRot;
                             doorBodyRB.constraints = RigidbodyConstraints.FreezeAll;
                             doorBodyRB.isKinematic = true;
                         }
+                    }
+
+                    // Apply sender's angular velocity so the door continues its natural swing
+                    Vector3 senderAngVel = new Vector3(angVelX, angVelY, angVelZ);
+                    if (senderAngVel.sqrMagnitude > 0f && opened)
+                    {
+                        doorBodyRB.angularVelocity = senderAngVel;
                     }
                 }
             }

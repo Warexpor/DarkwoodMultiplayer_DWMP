@@ -29,6 +29,7 @@ namespace DarkwoodMultiplayer.Networking
         private float _effectSyncTimer;
         private Vector3 _lastSentPosition;
         private bool _wasDragging;
+        private string _lastDraggedItemName;
         private bool _handshakeComplete;
 
         private bool _remoteInBearTrap;
@@ -43,6 +44,9 @@ namespace DarkwoodMultiplayer.Networking
         public Transform RemoteProxyTransform => _remoteProxy != null ? _remoteProxy.transform : null;
 
         public static bool IsApplyingRemoteState { get; private set; }
+
+        /// <summary>Tracks active drag sounds by object name so they can be stopped when drag ends.</summary>
+        private readonly Dictionary<string, AudioObject> _dragSounds = new Dictionary<string, AudioObject>();
 
         /// <summary>True while performing a save triggered by the remote peer.</summary>
         internal static bool _isRemoteSaveInProgress;
@@ -89,6 +93,9 @@ namespace DarkwoodMultiplayer.Networking
             Sync.DialogFreezeManager.OnDisconnected();
             Sync.DreamSyncManager.OnDisconnected();
             DestroyRemoteProxy();
+            StopAllDragSounds();
+            _wasDragging = false;
+            _lastDraggedItemName = null;
             _handshakeComplete = false;
             _peer = null;
             _sendTimer = 0f;
@@ -141,6 +148,13 @@ namespace DarkwoodMultiplayer.Networking
                 {
                     _timeSyncTimer = 0f;
                     SendTimeSync();
+                }
+
+                _shadowBroadcastTimer += Time.deltaTime;
+                if (_shadowBroadcastTimer >= ShadowBroadcastInterval)
+                {
+                    _shadowBroadcastTimer = 0f;
+                    BroadcastShadowStates();
                 }
             }
 
@@ -203,6 +217,7 @@ namespace DarkwoodMultiplayer.Networking
             if (local.dragging && local.itemBeingDragged != null)
             {
                 Item dragged = local.itemBeingDragged;
+                _lastDraggedItemName = dragged.name;
                 var dragMsg = new DragSyncMessage
                 {
                     PosX = dragged.transform.position.x,
@@ -212,7 +227,7 @@ namespace DarkwoodMultiplayer.Networking
                     RotY = dragged.transform.eulerAngles.y,
                     RotZ = dragged.transform.eulerAngles.z,
                     IsDragging = true,
-                    ObjectName = dragged.name,
+                    ObjectName = _lastDraggedItemName,
                     ItemType = dragged.invItem != null ? dragged.invItem.type : ""
                 };
                 Send(NetMessageType.DragSync, w => dragMsg.Serialize(w));
@@ -221,15 +236,15 @@ namespace DarkwoodMultiplayer.Networking
             else if (_wasDragging)
             {
                 // Drag ended — send one final message so the receiver knows
-                // to clean up any locally-spawned copy.
+                // to clean up any locally-spawned copy and stop the drag sound.
                 _wasDragging = false;
-                Item prevDragged = local.itemBeingDragged;
                 var dragMsg = new DragSyncMessage
                 {
                     IsDragging = false,
-                    ObjectName = prevDragged != null ? prevDragged.name : ""
+                    ObjectName = _lastDraggedItemName ?? ""
                 };
                 Send(NetMessageType.DragSync, w => dragMsg.Serialize(w));
+                _lastDraggedItemName = null;
             }
         }
 
@@ -298,12 +313,14 @@ namespace DarkwoodMultiplayer.Networking
 
                 float distToProxy = Vector3.Distance(c.transform.position, proxyT.position);
 
-                // Skip entities that have a Sniffer component — those are handled by
-                // HostSnifferUpdatePatch which respects the full sniffTime + cooldownTime
-                // timing (animation, sound, delayed attack). Without this, ProxyAggroCheck
-                // would bypass the Sniffer entirely and cause instant attacks instead
-                // of the sniff-then-attack sequence.
-                if (c.GetComponent<Sniffer>() != null)
+                // Only skip Sniffer entities when proxy is within their sniff radius
+                // (HostSnifferUpdatePatch handles those with proper sniff-then-attack
+                // timing: animation, sound, delayed attack). When the proxy is outside
+                // sniff radius but within nearViewDistance, the Sniffer won't detect
+                // the proxy — fall through to proxy aggro so the entity doesn't stand
+                // idly while the proxy is right behind it.
+                Sniffer entitySniffer = c.GetComponent<Sniffer>();
+                if (entitySniffer != null && distToProxy < entitySniffer.radius)
                 {
                     skippedFar++;
                     continue;
@@ -393,9 +410,11 @@ namespace DarkwoodMultiplayer.Networking
                 EntityStateBroadcastService.SetPeer(peer);
                 WorldSessionMessage session = _worldSync.BuildHostSession();
                 Send(NetMessageType.WorldSession, w => session.Serialize(w));
+                SendJournalBulkSync();
             }
 
             EnsureRemoteProxy();
+            SyncCurrentLightState();
             Connected?.Invoke();
         }
 
@@ -631,6 +650,36 @@ namespace DarkwoodMultiplayer.Networking
                 case NetMessageType.DialogFreeze:
                     HandleDialogFreeze(DialogFreezeMessage.Deserialize(new NetReader(payload)));
                     break;
+                case NetMessageType.MapMarker:
+                    HandleMapMarker(MapMarkerMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.MapMarkerRemove:
+                    HandleMapMarkerRemove(MapMarkerRemoveMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.MapElementDiscovered:
+                    HandleMapElementDiscovered(MapElementDiscoveredMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.OxygenTankStash:
+                    HandleOxygenTankStash(OxygenTankStashMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.CompressorTankConvert:
+                    HandleCompressorTankConvert(CompressorTankConvertMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.JournalBulkSync:
+                    HandleJournalBulkSync(JournalBulkSyncMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.ShadowStateUpdate:
+                    HandleShadowStateUpdate(ShadowStateUpdateMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.ContainerStateRequest:
+                    HandleContainerStateRequest(ContainerStateRequestMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.ContainerStateSync:
+                    HandleContainerStateSync(ContainerStateSyncMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.ReputationSync:
+                    HandleReputationSync(ReputationSyncMessage.Deserialize(new NetReader(payload)));
+                    break;
                 }
             }
             finally
@@ -787,8 +836,10 @@ namespace DarkwoodMultiplayer.Networking
 
             if (!msg.IsDragging)
             {
-                // Drag ended — destroy the locally-spawned proxy copy so it
-                // doesn't linger as a duplicate when the world-grid chunk loads.
+                // Drag ended — stop any playing drag sound, then destroy the
+                // locally-spawned proxy copy so it doesn't linger as a duplicate
+                // when the world-grid chunk loads.
+                StopDragSound(msg.ObjectName);
                 CleanupSpawnedDragProxy(msg.ObjectName);
                 return;
             }
@@ -822,7 +873,68 @@ namespace DarkwoodMultiplayer.Networking
                 targetRb.angularVelocity = Vector3.zero;
             }
 
+            // Play the item's moving sound so the remote player hears the drag
+            PlayDragSound(item);
+
             ModRuntime.Log?.LogInfo("[DragSync] " + item.name + " → " + targetPos);
+        }
+
+        private void PlayDragSound(Item item)
+        {
+            if (item == null) return;
+            string name = item.name;
+            if (string.IsNullOrEmpty(name)) return;
+
+            // Already playing for this item name
+            if (_dragSounds.TryGetValue(name, out var existing) && existing != null)
+                return;
+
+            ItemSounds sounds = item.GetComponent<ItemSounds>();
+            if (sounds == null) return;
+
+            string soundId = sounds.movingSound;
+            if (string.IsNullOrEmpty(soundId))
+            {
+                soundId = sounds.movingSound_grass;
+                if (string.IsNullOrEmpty(soundId))
+                    return;
+            }
+
+            // Check ground type for grass variant
+            if (Ground.getGround(item.transform.position) == null && !string.IsNullOrEmpty(sounds.movingSound_grass))
+                soundId = sounds.movingSound_grass;
+
+            // Wrap in ApplyingFromNetwork to prevent the audio forwarding patches
+            // from re-sending this sound back to the other peer (loop prevention).
+            bool prev = TraverseHack.ApplyingFromNetwork;
+            TraverseHack.ApplyingFromNetwork = true;
+            try
+            {
+                var ao = AudioController.Play(soundId, item.transform, sounds.volumeModifier);
+                if (ao != null)
+                    _dragSounds[name] = ao;
+            }
+            finally { TraverseHack.ApplyingFromNetwork = prev; }
+        }
+
+        private void StopDragSound(string objectName)
+        {
+            if (string.IsNullOrEmpty(objectName)) return;
+
+            if (_dragSounds.TryGetValue(objectName, out var ao) && ao != null)
+                ao.Stop(0.5f);
+
+            _dragSounds.Remove(objectName);
+        }
+
+        private void StopAllDragSounds()
+        {
+            foreach (var kv in _dragSounds)
+            {
+                if (kv.Value != null)
+                    kv.Value.Stop(0.5f);
+            }
+            _dragSounds.Clear();
         }
 
         /// <summary>Spawn an item on this peer so the remote drag can be reflected.</summary>
@@ -971,22 +1083,59 @@ namespace DarkwoodMultiplayer.Networking
 
         private void HandlePlayerAttack(PlayerAttackMessage msg)
         {
-            if (_role != NetworkRole.Host) return;
-            if (!PlayerPositionManager.HasRemotePlayer) return;
+            if (_role != NetworkRole.Host)
+            {
+                ModRuntime.Log?.LogInfo($"[HandlePlayerAttack] rejected: not host (role={_role})");
+                return;
+            }
+            if (_remoteProxy == null)
+            {
+                ModRuntime.Log?.LogInfo($"[HandlePlayerAttack] rejected: _remoteProxy is null");
+                return;
+            }
 
             Character target = CharacterTracker.FindByStableId(msg.TargetNameHash);
-            if (target == null) return;
 
             Vector3 attackPos = new Vector3(msg.AttackerPosX, msg.AttackerPosY, msg.AttackerPosZ);
+            Vector3 targetPos = new Vector3(msg.TargetPosX, msg.TargetPosY, msg.TargetPosZ);
+
+            if (target == null && !string.IsNullOrEmpty(msg.TargetName))
+            {
+                // Search near the target's position (from sender's perspective), not the attacker's.
+                // This avoids hitting the wrong entity when multiple share the same name
+                // and the attacker is closer to a different entity than the one they shot.
+                target = CharacterTracker.FindClosestByName(msg.TargetName, targetPos);
+                ModRuntime.Log?.LogInfo($"[HandlePlayerAttack] fallback by name '{msg.TargetName}': found={target?.name ?? "null"} (searched near targetPos)");
+            }
+
+            if (target == null)
+            {
+                ModRuntime.Log?.LogInfo($"[HandlePlayerAttack] target null: nameHash={msg.TargetNameHash} name='{msg.TargetName}'");
+                return;
+            }
+
             float distSq = Vector3.SqrMagnitude(target.transform.position - attackPos);
-            if (distSq > 350f * 350f) return;
+            if (distSq > 350f * 350f)
+            {
+                ModRuntime.Log?.LogInfo($"[HandlePlayerAttack] target too far: dist={Mathf.Sqrt(distSq):F1} > 350 (target={target.name} pos={target.transform.position} attackPos={attackPos})");
+                return;
+            }
 
-            Transform proxyT = _remoteProxy != null ? _remoteProxy.transform : null;
+            if (!target.gameObject.activeSelf)
+                target.gameObject.SetActive(true);
+            if (!target.enabled)
+                target.enabled = true;
 
-            if (proxyT != null && target.alive && target.target != proxyT)
+            Transform proxyT = _remoteProxy.transform;
+
+            if (target.alive && target.target != proxyT)
                 target.attackCharacter(proxyT);
 
+            ModRuntime.Log?.LogInfo($"[HandlePlayerAttack] applying {msg.Damage} dmg to {target.name}(id={msg.TargetNameHash}) alive={target.alive} health={target.Health}");
+
             target.getHit(msg.Damage, proxyT, canCutInHalf: false, byPlayer: true, canInterrupt: true);
+
+            ModRuntime.Log?.LogInfo($"[HandlePlayerAttack] after getHit: alive={target.alive} health={target.Health}");
         }
 
         private void HandleDamagePlayer(DamagePlayerMessage msg)
@@ -1339,6 +1488,130 @@ namespace DarkwoodMultiplayer.Networking
                     }
                 }
             }
+            else if (msg.Action == ContainerAction.Searched)
+            {
+                Item item = inv.GetComponent<Item>();
+                if (item != null)
+                {
+                    item.searched = true;
+                    Character c = inv.GetComponent<Character>();
+                    if (c != null)
+                        c.searched = true;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Client→Host: client requests the current state of a container inventory.
+        /// Host captures all non-empty slots and sends ContainerStateSync.
+        /// </summary>
+        private void HandleContainerStateRequest(ContainerStateRequestMessage msg)
+        {
+            if (_role != NetworkRole.Host) return;
+            Vector3 pos = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
+            Inventory inv = FindInventoryByPos(pos);
+            if (inv == null) return;
+
+            // Count non-empty slots
+            int count = 0;
+            for (int i = 0; i < inv.slots.Count; i++)
+            {
+                if (!InvItemClass.isNull(inv.slots[i].invItem))
+                    count++;
+            }
+
+            var sync = new ContainerStateSyncMessage
+            {
+                PosX = msg.PosX, PosY = msg.PosY, PosZ = msg.PosZ,
+                SlotCount = count,
+                Slots = new SlotStateEntry[count]
+            };
+            int idx = 0;
+            for (int i = 0; i < inv.slots.Count; i++)
+            {
+                var slot = inv.slots[i];
+                if (!InvItemClass.isNull(slot.invItem))
+                {
+                    sync.Slots[idx++] = new SlotStateEntry
+                    {
+                        SlotIndex = (byte)i,
+                        ItemType = slot.invItem.type,
+                        Amount = slot.invItem.amount,
+                        Durability = slot.invItem.durability,
+                        Ammo = slot.invItem.ammo
+                    };
+                }
+            }
+            Send(NetMessageType.ContainerStateSync, w => sync.Serialize(w), DeliveryMethod.ReliableOrdered);
+        }
+
+        /// <summary>
+        /// Host→Client: full container state snapshot.
+        /// Clears all slots on the client container and recreates them from
+        /// the host's authoritative slot data.
+        /// </summary>
+        private void HandleContainerStateSync(ContainerStateSyncMessage msg)
+        {
+            if (_role != NetworkRole.Client) return;
+            Vector3 pos = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
+            Inventory inv = FindInventoryByPos(pos);
+            if (inv == null) return;
+
+            // Clear all slots on the client container
+            foreach (var slot in inv.slots)
+            {
+                if (!InvItemClass.isNull(slot.invItem))
+                    slot.removeItem();
+            }
+
+            // Recreate slots from host data
+            for (int i = 0; i < msg.SlotCount; i++)
+            {
+                var entry = msg.Slots[i];
+                if (entry.SlotIndex < inv.slots.Count && !string.IsNullOrEmpty(entry.ItemType))
+                {
+                    inv.slots[entry.SlotIndex].createItem(entry.ItemType, entry.Amount,
+                        entry.Durability > 0f ? entry.Durability : 1f);
+                    if (entry.Ammo > 0)
+                    {
+                        var item = inv.slots[entry.SlotIndex].invItem;
+                        if (!InvItemClass.isNull(item))
+                            item.ammo = entry.Ammo;
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Host→Client: apply synced NPC reputation for non-morning-trader NPCs.
+        /// Sets the value directly in Flags.npcStates so it works regardless of
+        /// whether the NPC GameObject exists locally yet.
+        /// </summary>
+        private void HandleReputationSync(ReputationSyncMessage msg)
+        {
+            if (_role != NetworkRole.Client) return;
+            if (string.IsNullOrEmpty(msg.NpcName)) return;
+
+            var flags = Singleton<Flags>.Instance;
+            if (flags == null) return;
+
+            var state = flags.getNPCState(msg.NpcName);
+            if (state != null)
+            {
+                state.reputation = msg.Reputation;
+            }
+            else
+            {
+                state = new Flags.NPCState
+                {
+                    name = msg.NpcName,
+                    reputation = msg.Reputation,
+                    wantsToTalk = true
+                };
+                flags.npcStates.Add(state);
+            }
+
+            ModRuntime.Log?.LogInfo($"[RepSync] client applied rep for '{msg.NpcName}': {msg.Reputation}");
         }
 
         private void HandleBarricadeEvent(BarricadeEventMessage msg)
@@ -1466,10 +1739,19 @@ namespace DarkwoodMultiplayer.Networking
             if (_role != NetworkRole.Client) return;
             if (Player.Instance == null) return;
 
-            // Spawn local shadows around client player + receive exact host positions via ShadowSpawnMessage
-            Player.Instance.tryToSpawnShadow();
+            // Set the CharacterSpawner flags so the game knows shadows are active.
+            // Do NOT call Player.tryToSpawnShadow() — that spawns shadows at wrong local
+            // positions.  The host sends individual ShadowSpawnMessages with exact positions.
+            var cs = Singleton<CharacterSpawner>.Instance;
+            if (cs != null)
+            {
+                cs.shadowsRemove = false;
+                cs.shadowsPaused = false;
+                cs.spawnedShadows = true;
+                cs.spawnedShadowsAmount = 8;
+            }
 
-            ModRuntime.Log?.LogInfo("[ShadowSync] client triggered local NightShadows, also awaiting host ShadowSpawn messages");
+            ModRuntime.Log?.LogInfo("[ShadowSync] client received NightShadows event, awaiting host ShadowSpawn + ShadowStateUpdate messages");
         }
 
         private void HandleShadowSpawn(ShadowSpawnMessage msg)
@@ -1480,9 +1762,83 @@ namespace DarkwoodMultiplayer.Networking
             if (Core.isDay() || Singleton<CharacterSpawner>.Instance.shadowsRemove)
                 return;
 
+            string prefabPath = msg.ShadowType == 1
+                ? "characters/fakechars/shadow_immortal"
+                : "characters/fakechars/shadow";
+
             Vector3 pos = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
             Quaternion rot = Quaternion.Euler(90f, msg.RotY, 0f);
-            Core.AddPrefab("characters/fakechars/shadow", pos, rot, null);
+            GameObject go = Core.AddPrefab(prefabPath, pos, rot, null);
+            if (go == null) return;
+
+            // Attach a ShadowSyncInfo so HandleShadowStateUpdate can find it by ID
+            var info = go.GetComponent<ShadowSyncInfo>();
+            if (info == null)
+                info = go.AddComponent<ShadowSyncInfo>();
+            info.ShadowId = msg.ShadowId;
+            info.ShadowType = msg.ShadowType;
+
+            // Apply initial state
+            var sc = go.GetComponent<ShadowCreature>();
+            if (sc != null)
+            {
+                sc.distanceToPlayer = msg.DistanceToPlayer;
+                sc.dead = (msg.Flags & 2) != 0;
+            }
+
+            // Start the Float animation (blocked Start/appear won't trigger it)
+            var anim = go.GetComponent<tk2dSpriteAnimator>();
+            if (anim != null && anim.GetClipByName("Float") != null)
+                anim.Play("Float");
+
+            if (_clientShadowLookups == null)
+                _clientShadowLookups = new Dictionary<short, ShadowCreature>();
+            if (sc != null)
+                _clientShadowLookups[msg.ShadowId] = sc;
+        }
+
+        private Dictionary<short, ShadowCreature> _clientShadowLookups;
+
+        private void HandleShadowStateUpdate(ShadowStateUpdateMessage msg)
+        {
+            if (_role != NetworkRole.Client) return;
+            if (_clientShadowLookups == null) return;
+
+            if (_clientShadowLookups.TryGetValue(msg.ShadowId, out var sc) && sc != null)
+            {
+                // Update position
+                sc.transform.position = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
+                sc.transform.rotation = Quaternion.Euler(90f, msg.RotY, 0f);
+                sc.distanceToPlayer = msg.DistanceToPlayer;
+
+                bool dead = (msg.Flags & 2) != 0;
+                if (dead && !sc.dead)
+                {
+                    sc.dead = true;
+                    var anim = sc.GetComponent<tk2dSpriteAnimator>();
+                    if (anim != null && anim.GetClipByName("Death1") != null)
+                        anim.Play("Death1");
+                }
+
+                if (dead)
+                {
+                    _clientShadowLookups.Remove(msg.ShadowId);
+                }
+            }
+            else
+            {
+                // Shadow not yet created — treat as spawn if we missed ShadowSpawnMessage
+                var spawnMsg = new ShadowSpawnMessage
+                {
+                    ShadowId = msg.ShadowId,
+                    ShadowType = 0,
+                    PosX = msg.PosX, PosY = msg.PosY, PosZ = msg.PosZ,
+                    RotY = msg.RotY,
+                    DistanceToPlayer = msg.DistanceToPlayer,
+                    Flags = msg.Flags
+                };
+                HandleShadowSpawn(spawnMsg);
+            }
         }
 
         private void HandleScenarioSync(ScenarioSyncMessage msg)
@@ -1661,6 +2017,65 @@ namespace DarkwoodMultiplayer.Networking
                     journal.addJournalEntry(msg.Type, noPopup: false);
                     break;
             }
+
+            // World-object cleanup: destroy the physical journal object on this peer
+            // so the world reflects that the item was already picked up.
+            DestroyWorldJournalObject(msg.Kind, msg.Type);
+        }
+
+        /// <summary>
+        /// Finds and destroys the physical world object (JournalNoteReference,
+        /// KeyReference, or QuestItemReference) matching the given journal item,
+        /// so the host's world reflects that the remote player already took it.
+        /// </summary>
+        private static void DestroyWorldJournalObject(JournalItemKind kind, string type)
+        {
+            if (string.IsNullOrEmpty(type)) return;
+
+            switch (kind)
+            {
+                case JournalItemKind.Note:
+                {
+                    var allNotes = Resources.FindObjectsOfTypeAll<JournalNoteReference>();
+                    for (int i = 0; i < allNotes.Length; i++)
+                    {
+                        if (allNotes[i] == null) continue;
+                        var note = Singleton<JournalDatabase>.Instance?.getNote(allNotes[i].noteName);
+                        if (note != null && note.type == type)
+                        {
+                            if (allNotes[i].GetComponent<Item>() != null)
+                                UnityEngine.Object.Destroy(allNotes[i].gameObject);
+                        }
+                    }
+                    break;
+                }
+                case JournalItemKind.Key:
+                {
+                    var allKeys = Resources.FindObjectsOfTypeAll<KeyReference>();
+                    for (int i = 0; i < allKeys.Length; i++)
+                    {
+                        if (allKeys[i] != null && allKeys[i].type == type)
+                        {
+                            if (allKeys[i].GetComponent<Item>() != null)
+                                UnityEngine.Object.Destroy(allKeys[i].gameObject);
+                        }
+                    }
+                    break;
+                }
+                case JournalItemKind.QuestItem:
+                {
+                    var allQuest = Resources.FindObjectsOfTypeAll<QuestItemReference>();
+                    for (int i = 0; i < allQuest.Length; i++)
+                    {
+                        if (allQuest[i] != null && allQuest[i].type == type)
+                        {
+                            if (allQuest[i].GetComponent<Item>() != null)
+                                UnityEngine.Object.Destroy(allQuest[i].gameObject);
+                        }
+                    }
+                    break;
+                }
+            }
         }
 
         private void HandleFriendlyFire(FriendlyFireMessage msg)
@@ -1729,6 +2144,28 @@ namespace DarkwoodMultiplayer.Networking
         private float _timeSyncTimer;
         private const float TimeSyncInterval = 2f;
 
+        private short _nextShadowId;
+        private readonly Dictionary<short, ShadowCreature> _shadowTracked = new Dictionary<short, ShadowCreature>();
+        private float _shadowBroadcastTimer;
+        private const float ShadowBroadcastInterval = 0.3f;
+
+        public short GetNextShadowId()
+        {
+            _nextShadowId++;
+            if (_nextShadowId >= 9999) _nextShadowId = 1;
+            return _nextShadowId;
+        }
+
+        public void RegisterShadow(short id, ShadowCreature sc)
+        {
+            _shadowTracked[id] = sc;
+        }
+
+        public void UnregisterShadow(short id)
+        {
+            _shadowTracked.Remove(id);
+        }
+
         public void SendDoorState(DoorState door)
         {
             if (!IsConnected) return;
@@ -1765,6 +2202,50 @@ namespace DarkwoodMultiplayer.Networking
         {
             if (!IsConnected) return;
             Send(NetMessageType.ShadowSpawn, w => msg.Serialize(w), DeliveryMethod.ReliableOrdered);
+        }
+
+        public void SendShadowStateUpdate(ShadowStateUpdateMessage msg)
+        {
+            if (!IsConnected) return;
+            Send(NetMessageType.ShadowStateUpdate, w => msg.Serialize(w), DeliveryMethod.Unreliable);
+        }
+
+        private void BroadcastShadowStates()
+        {
+            if (_role != NetworkRole.Host) return;
+            if (!IsConnected) return;
+            if (_shadowTracked.Count == 0) return;
+
+            // Clean dead shadows, broadcast living ones
+            List<short> deadIds = null;
+            foreach (var kvp in _shadowTracked)
+            {
+                if (kvp.Value == null || kvp.Value.dead)
+                {
+                    if (deadIds == null) deadIds = new List<short>();
+                    deadIds.Add(kvp.Key);
+                    continue;
+                }
+
+                var sc = kvp.Value;
+                var msg = new ShadowStateUpdateMessage
+                {
+                    ShadowId = kvp.Key,
+                    PosX = sc.transform.position.x,
+                    PosY = sc.transform.position.y,
+                    PosZ = sc.transform.position.z,
+                    RotY = sc.transform.rotation.eulerAngles.y,
+                    DistanceToPlayer = sc.distanceToPlayer,
+                    Flags = (byte)(sc.dead ? 2 : 0)
+                };
+                SendShadowStateUpdate(msg);
+            }
+
+            if (deadIds != null)
+            {
+                for (int i = 0; i < deadIds.Count; i++)
+                    _shadowTracked.Remove(deadIds[i]);
+            }
         }
 
         public void SendScenarioSync(ScenarioSyncMessage msg)
@@ -1872,11 +2353,19 @@ namespace DarkwoodMultiplayer.Networking
             Send(NetMessageType.WorldObjectRemoved, w => msg.Serialize(w));
         }
 
-        public void SendPlayerLightState(PlayerLightStateMessage msg)
+        public void SendPlayerLightState(PlayerLightStateMessage msg, DeliveryMethod method = DeliveryMethod.Unreliable)
         {
             if (!IsConnected) return;
             if (IsApplyingRemoteState) return;
-            Send(NetMessageType.PlayerLightState, w => msg.Serialize(w));
+            Send(NetMessageType.PlayerLightState, w => msg.Serialize(w), method);
+        }
+
+        private void SyncCurrentLightState()
+        {
+            Player local = Player.Instance;
+            if (local == null) return;
+            var msg = LightStateHelper.BuildLightState(local);
+            SendPlayerLightState(msg, DeliveryMethod.ReliableOrdered);
         }
 
         public void SendThrowableSpawn(ThrowableSpawnMessage msg)
@@ -1939,7 +2428,7 @@ namespace DarkwoodMultiplayer.Networking
         {
             if (!IsConnected) return;
             if (IsApplyingRemoteState) return;
-            Send(NetMessageType.PlayerAnimation, w => msg.Serialize(w));
+            Send(NetMessageType.PlayerAnimation, w => msg.Serialize(w), DeliveryMethod.ReliableOrdered);
         }
 
         public void SendPlayerAnimLibrary(PlayerAnimLibraryMessage msg)
@@ -2113,6 +2602,124 @@ namespace DarkwoodMultiplayer.Networking
         }
 
         /// <summary>
+        /// Handles a map marker placed by the remote player.
+        /// Both host and client can place markers, so this is handled by either side.
+        /// </summary>
+        private void HandleMapMarker(MapMarkerMessage msg)
+        {
+            Vector3 pos = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
+            Sync.MultiplayerMapManager.AddRemoteMarker(pos);
+            ModRuntime.Log?.LogInfo($"[MapMarker] remote marker at {pos:F1}");
+        }
+
+        private void HandleMapMarkerRemove(MapMarkerRemoveMessage msg)
+        {
+            Vector3 pos = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
+            Sync.MultiplayerMapManager.RemoveRemoteMarker(pos);
+            ModRuntime.Log?.LogInfo($"[MapMarker] remote marker removed at {pos:F1}");
+        }
+
+        /// <summary>
+        /// Handles a MapElement discovery notification from the remote peer.
+        /// Both host and client can discover locations, so this is bidirectional.
+        /// </summary>
+        private void HandleMapElementDiscovered(MapElementDiscoveredMessage msg)
+        {
+            if (string.IsNullOrEmpty(msg.ElementName)) return;
+            Sync.MultiplayerMapManager.OnRemoteElementDiscovered(msg.ElementName);
+        }
+
+        private void HandleOxygenTankStash(OxygenTankStashMessage msg)
+        {
+            if (_role != NetworkRole.Client) return;
+            Patches.OxygenTankStashHandler.Handle();
+        }
+
+        private void HandleCompressorTankConvert(CompressorTankConvertMessage msg)
+        {
+            if (_role != NetworkRole.Client) return;
+            Patches.CompressorTankConvertHandler.Handle();
+        }
+
+        private void HandleJournalBulkSync(JournalBulkSyncMessage msg)
+        {
+            if (_role != NetworkRole.Host) return;
+            Journal journal = Singleton<UI>.Instance?.journal;
+            if (journal == null) return;
+
+            for (int i = 0; i < msg.NoteTypes.Length; i++)
+            {
+                if (!journal.notesDict.ContainsKey(msg.NoteTypes[i]))
+                {
+                    Journal.Note note = new Journal.Note();
+                    note.type = msg.NoteTypes[i];
+                    note.timePickedUp = Singleton<Controller>.Instance != null
+                        ? Singleton<Controller>.Instance.CurrentTime : 0;
+                    journal.notesDict.Add(msg.NoteTypes[i], note);
+                }
+            }
+
+            for (int i = 0; i < msg.KeyTypes.Length; i++)
+            {
+                if (!journal.keysDict.ContainsKey(msg.KeyTypes[i]))
+                {
+                    Journal.Key key = new Journal.Key();
+                    key.type = msg.KeyTypes[i];
+                    journal.keysDict.Add(msg.KeyTypes[i], key);
+                }
+            }
+
+            for (int i = 0; i < msg.QuestItemTypes.Length; i++)
+            {
+                if (!journal.itemsDict.ContainsKey(msg.QuestItemTypes[i]))
+                {
+                    Journal.Item item = new Journal.Item();
+                    item.type = msg.QuestItemTypes[i];
+                    journal.itemsDict.Add(msg.QuestItemTypes[i], item);
+                }
+            }
+
+            for (int i = 0; i < msg.JournalEntryTypes.Length; i++)
+            {
+                journal.addJournalEntry(msg.JournalEntryTypes[i], noPopup: true);
+            }
+        }
+
+        private void SendJournalBulkSync()
+        {
+            Journal journal = Singleton<UI>.Instance?.journal;
+            if (journal == null) return;
+
+            var msg = new JournalBulkSyncMessage();
+
+            var notes = journal.notesDict.Keys;
+            msg.NoteTypes = new string[notes.Count];
+            int idx = 0;
+            foreach (var key in notes)
+                msg.NoteTypes[idx++] = key;
+
+            var keys = journal.keysDict.Keys;
+            msg.KeyTypes = new string[keys.Count];
+            idx = 0;
+            foreach (var key in keys)
+                msg.KeyTypes[idx++] = key;
+
+            var questItems = journal.itemsDict.Keys;
+            msg.QuestItemTypes = new string[questItems.Count];
+            idx = 0;
+            foreach (var key in questItems)
+                msg.QuestItemTypes[idx++] = key;
+
+            var journalEntries = journal.journalEntriesDict.Keys;
+            msg.JournalEntryTypes = new string[journalEntries.Count];
+            idx = 0;
+            foreach (var key in journalEntries)
+                msg.JournalEntryTypes[idx++] = key;
+
+            Send(NetMessageType.JournalBulkSync, w => msg.Serialize(w));
+        }
+
+        /// <summary>
         /// Handles NPC dialogue state sync from the host. Applies
         /// alreadyShown/disabled/wantsToTalk states to the local NPC
         /// so dialog progression stays in sync.
@@ -2157,7 +2764,7 @@ namespace DarkwoodMultiplayer.Networking
         private void HandleDreamStarted(DreamStartedMessage msg)
         {
             Vector3 locPos = new Vector3(msg.LocPosX, msg.LocPosY, msg.LocPosZ);
-            Sync.DreamSyncManager.OnRemoteDreamStarted(msg.PresetName, msg.IsEpilogue, locPos);
+            Sync.DreamSyncManager.OnRemoteDreamStarted(msg.PresetName, false, locPos);
         }
 
         /// <summary>
@@ -2258,7 +2865,10 @@ namespace DarkwoodMultiplayer.Networking
 
             _remoteProxy = RemotePlayerProxy.Spawn(ModRuntime.Log);
             if (_remoteProxy != null)
+            {
                 _remoteProxy.OnFootstep += HandleProxyFootstep;
+                RemoveClonedEmitters(_remoteProxy.transform);
+            }
         }
 
         private void DestroyRemoteProxy()
@@ -2373,7 +2983,34 @@ namespace DarkwoodMultiplayer.Networking
             if (_remoteProxy == null) return;
 
             Transform proxyT = _remoteProxy.transform;
-            Character.alertInArea(proxyT.position, msg.Range, msg.DangerousSound, msg.Volume, msg.Gunshot);
+            Vector3 proxyPos = proxyT.position;
+            float range = msg.Range;
+
+            // Primary: Physics.OverlapSphere-based alert (finds entities with active colliders)
+            Character.alertInArea(proxyPos, range, msg.DangerousSound, msg.Volume, msg.Gunshot);
+
+            // Fallback: directly alert all tracked characters within range, even if their
+            // colliders or chunks are briefly inactive when the message arrives.
+            Character[] all = CharacterTracker.GetAll();
+            for (int i = 0; i < all.Length; i++)
+            {
+                Character c = all[i];
+                if (c == null) continue;
+                if (c.deaf || !c.alive) continue;
+                if (c.name.Contains("Player") || c.name.Contains("RemotePlayer"))
+                    continue;
+
+                float dist = Vector3.Distance(c.transform.position, proxyPos);
+                if (dist <= range)
+                {
+                    if (!c.gameObject.activeSelf)
+                        c.gameObject.SetActive(true);
+                    if (!c.enabled)
+                        c.enabled = true;
+
+                    c.heardSound(proxyPos, range, msg.DangerousSound, msg.Volume, msg.Gunshot);
+                }
+            }
         }
 
         private void HandlePlayerScare(PlayerScareMessage msg)
@@ -2456,6 +3093,21 @@ namespace DarkwoodMultiplayer.Networking
                 case EntitySoundType.Escaping:
                     c.sounds.playEscapingLoop();
                     break;
+                case EntitySoundType.Attack1:
+                    if (!string.IsNullOrEmpty(c.sounds.attack1))
+                        c.sounds.play(c.sounds.attack1);
+                    break;
+                case EntitySoundType.Attack2:
+                    if (!string.IsNullOrEmpty(c.sounds.attack2))
+                        c.sounds.play(c.sounds.attack2);
+                    break;
+                case EntitySoundType.Death:
+                    if (!string.IsNullOrEmpty(c.sounds.death))
+                        c.sounds.play(c.sounds.death);
+                    break;
+                case EntitySoundType.GetHit:
+                    c.sounds.playGetHitByAxe1();
+                    break;
             }
         }
 
@@ -2492,8 +3144,11 @@ namespace DarkwoodMultiplayer.Networking
             Transform emitterRoot = _remoteProxy.transform.Find("ItemLightEmitter");
             if (msg.HasLightEmitter && msg.LightOn)
             {
+                // Full cleanup before spawning: remove mod-named AND cloned emitters
+                RemoveAllItemEmitters(_remoteProxy.transform);
+
                 // Look up the item in the database to get actual prefab references
-                if (emitterRoot == null && !string.IsNullOrEmpty(msg.ItemType))
+                if (!string.IsNullOrEmpty(msg.ItemType))
                 {
                     InvItem itemDef = Singleton<ItemsDatabase>.Instance?.getItem(msg.ItemType, instantiate: false);
                     if (itemDef != null && itemDef.lightEmitter != null)
@@ -2529,6 +3184,11 @@ namespace DarkwoodMultiplayer.Networking
                                 }
                             }
                         }
+
+                        // Wire up per-frame emitter positioning
+                        var animCtrl = _remoteProxy.GetComponent<Players.SecondPlayerAnimController>();
+                        if (animCtrl != null)
+                            animCtrl.SetEmittedItem(itemDef);
                     }
                     else
                     {
@@ -2538,12 +3198,16 @@ namespace DarkwoodMultiplayer.Networking
             }
             else if (!msg.LightOn && emitterRoot != null)
             {
-                RemoveLightEmitter(_remoteProxy.transform);
+                RemoveAllItemEmitters(_remoteProxy.transform);
             }
         }
 
-        private static void RemoveLightEmitter(Transform proxyRoot)
+        private static void RemoveAllItemEmitters(Transform proxyRoot)
         {
+            var animCtrl = proxyRoot.GetComponent<Players.SecondPlayerAnimController>();
+            if (animCtrl != null)
+                animCtrl.ClearEmittedItem();
+
             Transform emitter = proxyRoot.Find("ItemLightEmitter");
             if (emitter != null)
             {
@@ -2555,6 +3219,38 @@ namespace DarkwoodMultiplayer.Networking
             Transform particle = proxyRoot.Find("ItemParticleEmitter");
             if (particle != null)
                 Core.RemovePooledPrefab(particle);
+
+            RemoveClonedEmitters(proxyRoot);
+        }
+
+        private static void RemoveClonedEmitters(Transform proxyRoot)
+        {
+            if (proxyRoot == null) return;
+
+            HashSet<string> preserved = new HashSet<string>
+            {
+                "Flashlight",
+                "PlayerLightDot",
+                "PlayerFOVLight",
+                "PlayerFOVLogic",
+                "PlayerFOVLightDot",
+                "PlayerShadow",
+                "Shadow"
+            };
+
+            List<Transform> toDestroy = new List<Transform>();
+
+            foreach (Transform child in proxyRoot)
+            {
+                if (preserved.Contains(child.name))
+                    continue;
+
+                if (child.GetComponent<Light2D>() != null || child.GetComponent<ParticleSystem>() != null)
+                    toDestroy.Add(child);
+            }
+
+            foreach (Transform t in toDestroy)
+                Core.RemovePooledPrefab(t);
         }
 
         private void HandleThrowableSpawn(ThrowableSpawnMessage msg)
@@ -2598,12 +3294,29 @@ namespace DarkwoodMultiplayer.Networking
             TraverseHack.ApplyingFromNetwork = true;
             try
             {
-                var audioObj = AudioController.Play(msg.SoundId, pos, null, Mathf.Clamp01(msg.Volume));
+                // Parent the AudioObject to the proxy so the game's occlusion system
+                // (which may key off parent transforms like CharacterSounds does) can
+                // apply proper wall-muffling to forwarded player sounds.
+                Transform parent = _remoteProxy != null ? _remoteProxy.transform : null;
+                var audioObj = AudioController.Play(msg.SoundId, pos, parent, Mathf.Clamp01(msg.Volume));
                 if (audioObj != null)
                 {
+                    // Force 3D spatial blend since this sound plays at a world position.
                     audioObj.primaryAudioSource.spatialBlend = 1f;
-                    audioObj.primaryAudioSource.minDistance = 30f;
-                    audioObj.primaryAudioSource.maxDistance = 500f;
+
+                    // Enforce a minimum audible range for forwarded sounds.
+                    // AudioItems in vanilla are designed for single-player where the
+                    // listener IS the player — ranges can be very small (1-5f) or even
+                    // 2D. In multiplayer the listener is the remote player, so we need
+                    // a wider floor so the sound is audible at typical engagement distances.
+                    // Respect AudioItem if its range is already larger than our floor.
+                    AudioItem item = AudioController.GetAudioItem(msg.SoundId);
+                    float itemMin = (item != null && item.overrideAudioSourceSettings)
+                        ? item.audioSource_MinDistance : 30f;
+                    float itemMax = (item != null && item.overrideAudioSourceSettings)
+                        ? item.audioSource_MaxDistance : 500f;
+                    audioObj.primaryAudioSource.minDistance = Mathf.Max(itemMin, 30f);
+                    audioObj.primaryAudioSource.maxDistance = Mathf.Max(itemMax, 100f);
                     audioObj.primaryAudioSource.rolloffMode = AudioRolloffMode.Linear;
                 }
             }

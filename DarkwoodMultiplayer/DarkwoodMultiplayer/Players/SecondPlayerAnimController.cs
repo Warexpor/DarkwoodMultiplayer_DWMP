@@ -39,6 +39,12 @@ namespace DarkwoodMultiplayer.Players
         // the legs while the walk animation is still cycling to its neutral frame.
         private bool _feetNeutralReached;
 
+        // Emitter transforms for torch/lantern light & particle effects,
+        // positioned per frame using the item's emitterPositions data.
+        private Transform _lightEmitter;
+        private Transform _particleEmitter;
+        private InvItem _emitterItem;
+
         /// <summary>Current locomotion state.</summary>
         public LocomotionState State => _state;
         /// <summary>Current horizontal flip state.</summary>
@@ -96,6 +102,67 @@ namespace DarkwoodMultiplayer.Players
             {
                 ResetLegsToStanding();
             }
+
+            UpdateEmitterPosition();
+        }
+
+        /// <summary>
+        /// Sets the item whose emitter positions should drive the torch/lantern
+        /// light and particle effect positions each frame.
+        /// </summary>
+        public void SetEmittedItem(InvItem itemDef)
+        {
+            _emitterItem = itemDef;
+            _lightEmitter = transform.Find("ItemLightEmitter");
+            _particleEmitter = transform.Find("ItemParticleEmitter");
+        }
+
+        /// <summary>
+        /// Clears the emitter item reference so emitters snap to (0,0,z).
+        /// </summary>
+        public void ClearEmittedItem()
+        {
+            _emitterItem = null;
+        }
+
+        private void UpdateEmitterPosition()
+        {
+            if (_emitterItem == null || _torsoAnimator == null)
+                return;
+
+            var ep = _emitterItem.emitterPositions;
+            if (ep == null || ep.typesDict == null || ep.typesDict.Count == 0)
+                return;
+
+            string clipName = _torsoAnimator.CurrentClip?.name;
+            if (string.IsNullOrEmpty(clipName))
+                return;
+
+            if (!ep.typesDict.TryGetValue(clipName, out var entry))
+            {
+                // Clip not in dictionary — reset to origin
+                if (_lightEmitter != null)
+                    _lightEmitter.localPosition = new Vector3(0f, 0f, _lightEmitter.localPosition.z);
+                if (_particleEmitter != null)
+                    _particleEmitter.localPosition = new Vector3(0f, 0f, _particleEmitter.localPosition.z);
+                return;
+            }
+
+            int frame = _torsoAnimator.CurrentFrame;
+            if (entry.positions == null || entry.positions.Count <= frame)
+            {
+                if (_lightEmitter != null)
+                    _lightEmitter.localPosition = new Vector3(0f, 0f, _lightEmitter.localPosition.z);
+                if (_particleEmitter != null)
+                    _particleEmitter.localPosition = new Vector3(0f, 0f, _particleEmitter.localPosition.z);
+                return;
+            }
+
+            Vector2 pos = entry.positions[frame];
+            if (_lightEmitter != null)
+                _lightEmitter.localPosition = new Vector3(pos.x, pos.y, _lightEmitter.localPosition.z);
+            if (_particleEmitter != null)
+                _particleEmitter.localPosition = new Vector3(pos.x, pos.y, _particleEmitter.localPosition.z);
         }
 
         /// <summary>
@@ -124,7 +191,15 @@ namespace DarkwoodMultiplayer.Players
             if (!string.IsNullOrEmpty(torsoClip))
                 PlayTorso(torsoClip);
             else if (state == LocomotionState.Idle)
-                StopTorso();
+            {
+                // Don't interrupt transient non-looping clips (e.g. Hit1/Hit2
+                // from PlayerAnimationMessage) — let them play to completion.
+                bool transientPlaying = _torsoAnimator != null && _torsoAnimator.Playing
+                    && _torsoAnimator.CurrentClip != null
+                    && _torsoAnimator.CurrentClip.wrapMode == tk2dSpriteAnimationClip.WrapMode.Once;
+                if (!transientPlaying)
+                    PlayTorso("Idle");
+            }
             else
                 ApplyLocomotion(state, Vector3.zero, legFacingY, reverseLegs);
 

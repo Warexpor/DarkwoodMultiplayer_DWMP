@@ -70,6 +70,10 @@ namespace DarkwoodMultiplayer.Patches
             if (__instance.type != MeleeSensor.MeleeSensorType.player)
                 return true;
 
+            // Skip proxy hits — ClientFriendlyFirePatch handles those
+            if (_collider.GetComponentInParent<RemotePlayerProxy>() != null)
+                return true;
+
             // Send sound for all player melee hits (Character, Door, Window, Item)
             var soundMsg = new PlayerSoundMessage
             {
