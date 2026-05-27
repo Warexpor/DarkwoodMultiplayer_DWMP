@@ -1,4 +1,6 @@
 using DarkwoodMultiplayer.Networking;
+using DarkwoodMultiplayer.Players;
+using DarkwoodMultiplayer.Spectator;
 using System;
 using System.Collections;
 using UnityEngine;
@@ -9,7 +11,6 @@ namespace DarkwoodMultiplayer.Sync
     {
         private static bool _localDreamActive;
         private static bool _remoteDreamActive;
-        private static int _dreamFreezeDepth;
         private static string _currentDreamPreset;
         private static bool _isEpilogueDream;
 
@@ -110,6 +111,19 @@ namespace DarkwoodMultiplayer.Sync
 
             ModRuntime.Log?.LogInfo($"[DreamSync] Remote dream ended: {_currentDreamPreset}");
 
+            if (!_isEpilogueDream)
+            {
+                var spec = SpectatorModeController.Instance;
+                if (spec != null && spec.IsSpectating)
+                {
+                    spec.ForceExit();
+                    var cam = Singleton<CamMain>.Instance;
+                    var player = Player.Instance;
+                    if (cam != null && player != null)
+                        cam.followTarget = player.transform;
+                }
+            }
+
             CleanupDreamScene(_currentDreamPreset);
 
             if (!_isEpilogueDream)
@@ -130,6 +144,18 @@ namespace DarkwoodMultiplayer.Sync
 
             if (_remoteDreamActive)
             {
+                if (!_isEpilogueDream)
+                {
+                    var spec = SpectatorModeController.Instance;
+                    if (spec != null && spec.IsSpectating)
+                    {
+                        spec.ForceExit();
+                        var cam = Singleton<CamMain>.Instance;
+                        var player = Player.Instance;
+                        if (cam != null && player != null)
+                            cam.followTarget = player.transform;
+                    }
+                }
                 CleanupDreamScene(_currentDreamPreset);
                 if (!_isEpilogueDream)
                 {
@@ -142,7 +168,7 @@ namespace DarkwoodMultiplayer.Sync
             _remoteDreamActive = false;
             _currentDreamPreset = null;
             _isEpilogueDream = false;
-            _dreamFreezeDepth = 0;
+            FreezeTracker.Reset();
         }
 
         private static void SavePreDreamState()
@@ -233,6 +259,11 @@ namespace DarkwoodMultiplayer.Sync
                     Singleton<WorldGrid>.Instance.currentGrid.leave();
                 Singleton<WorldGrid>.Instance.setGrid(locationName);
                 Singleton<WorldGrid>.Instance.refreshPosition(player._transform.position, instant: true, force: true);
+            }
+
+            if (!isEpilogue)
+            {
+                EnterDreamSpectator();
             }
 
             ModRuntime.Log?.LogInfo($"[DreamSync] Player positioned at dream location, epilogue={isEpilogue}");
@@ -337,21 +368,12 @@ namespace DarkwoodMultiplayer.Sync
 
         private static void ApplyDreamFreeze()
         {
-            if (_dreamFreezeDepth == 0)
-            {
-                Core.pause(keepMusicAndEnviromental: true);
-            }
-            _dreamFreezeDepth++;
+            FreezeTracker.AddFreeze();
         }
 
         private static void RemoveDreamFreeze()
         {
-            _dreamFreezeDepth--;
-            if (_dreamFreezeDepth <= 0)
-            {
-                _dreamFreezeDepth = 0;
-                Core.unpause(1f);
-            }
+            FreezeTracker.RemoveFreeze();
         }
 
         private static void ApplyDreamCameraEffects(string presetName)
@@ -388,6 +410,30 @@ namespace DarkwoodMultiplayer.Sync
             {
                 ModRuntime.Log?.LogWarning($"[DreamSync] Failed to remove camera effects: {ex.Message}");
             }
+        }
+
+        private static void EnterDreamSpectator()
+        {
+            var net = ModRuntime.Network as LanNetworkManager;
+            if (net == null) return;
+
+            Transform followTarget;
+            if (net.Role == NetworkRole.Host)
+                followTarget = net.RemoteProxyTransform;
+            else
+            {
+                var proxy = RemotePlayerProxy.Instance;
+                followTarget = proxy?.transform;
+            }
+
+            if (followTarget == null)
+            {
+                ModRuntime.Log?.LogWarning("[DreamSync] No remote target for dream spectator");
+                return;
+            }
+
+            SpectatorModeController.EnsureExists();
+            SpectatorModeController.Instance.ForceEnter(followTarget);
         }
 
         private static void ShowDreamTransition()

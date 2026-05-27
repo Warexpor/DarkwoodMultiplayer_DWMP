@@ -73,6 +73,8 @@ namespace DarkwoodMultiplayer.Patches
                 DialogSyncManager.SessionNpcName = __instance.npc.name;
                 DialogSyncManager.IsLeading = true;
                 DialogSyncManager.SendStateUpdate();
+
+                DialogFreezeManager.OnHostDialogOpened();
             }
         }
     }
@@ -230,6 +232,7 @@ namespace DarkwoodMultiplayer.Patches
             if (net.Role == NetworkRole.Host && DialogSyncManager.IsLeading)
             {
                 ModRuntime.Log?.LogInfo("[DialogSync] Host ending dialog session");
+                DialogFreezeManager.OnHostDialogClosed();
                 DialogSyncManager.EndSession();
                 return true;
             }

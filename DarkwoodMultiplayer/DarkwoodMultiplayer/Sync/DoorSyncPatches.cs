@@ -265,6 +265,38 @@ namespace DarkwoodMultiplayer.Sync
         }
     }
 
+    /// <summary>
+    /// Harmony patch: intercepts Constructible.construct() (construction menu items:
+    /// furniture, workbenches, traps built via construction menu) and broadcasts
+    /// the construction to remote peers.
+    /// </summary>
+    [HarmonyPatch(typeof(Constructible), "construct", new[] { typeof(bool), typeof(int) })]
+    public static class ConstructibleConstructPatch
+    {
+        private static void Postfix(Constructible __instance, bool manual, int forceOption)
+        {
+            if (ModRuntime.Network == null)
+                return;
+
+            if (LanNetworkManager.IsApplyingRemoteState)
+                return;
+
+            Vector3 p = __instance.transform.position;
+            Vector3 key = new Vector3(
+                Mathf.Round(p.x * 10f) / 10f,
+                Mathf.Round(p.y * 10f) / 10f,
+                Mathf.Round(p.z * 10f) / 10f);
+
+            ModRuntime.Network.SendConstructible(new ConstructibleMessage
+            {
+                PosX = key.x, PosY = key.y, PosZ = key.z,
+                UseIngredients = manual,
+                OptionIndex = forceOption
+            });
+            ModRuntime.Log?.LogInfo("[ConstructibleSync] sent construct at " + key + " option=" + forceOption);
+        }
+    }
+
     /// <summary>Harmony patch: intercepts Item.empDisable and broadcasts the light-off state.</summary>
     [HarmonyPatch(typeof(Item), "empDisable")]
     public static class ItemEmpDisablePatch
@@ -286,6 +318,94 @@ namespace DarkwoodMultiplayer.Sync
                 IsOn = false, ItemName = __instance.name, ItemType = itemType
             });
             ModRuntime.Log?.LogInfo("[LightSync] send empDisable " + __instance.name + " type=" + itemType);
+        }
+    }
+
+    /// <summary>
+    /// Harmony patch: intercepts InteractiveItem.switchMe() (player-toggled levers, switches,
+    /// buttons) and broadcasts the new toggle state to all peers.
+    /// </summary>
+    [HarmonyPatch(typeof(InteractiveItem), "switchMe")]
+    public static class InteractiveItemSwitchPatch
+    {
+        private static void Postfix(InteractiveItem __instance)
+        {
+            if (ModRuntime.Network == null)
+                return;
+
+            if (LanNetworkManager.IsApplyingRemoteState)
+                return;
+
+            Vector3 p = __instance.transform.position;
+            Vector3 key = new Vector3(
+                Mathf.Round(p.x * 10f) / 10f,
+                Mathf.Round(p.y * 10f) / 10f,
+                Mathf.Round(p.z * 10f) / 10f);
+
+            ModRuntime.Network.SendInteractiveItemSwitch(new InteractiveItemSwitchMessage
+            {
+                PosX = key.x, PosY = key.y, PosZ = key.z,
+                IsOn = __instance.isOn
+            });
+            ModRuntime.Log?.LogInfo("[InteractiveItemSync] switchMe at " + key + " isOn=" + __instance.isOn);
+        }
+    }
+
+    /// <summary>
+    /// Harmony patch: intercepts Padlock.unlock() (correct combination entered)
+    /// and broadcasts the unlock to all peers.
+    /// </summary>
+    [HarmonyPatch(typeof(Padlock), "unlock", new[] { typeof(bool) })]
+    public static class PadlockUnlockPatch
+    {
+        private static void Postfix(Padlock __instance, bool manually)
+        {
+            if (ModRuntime.Network == null)
+                return;
+
+            if (LanNetworkManager.IsApplyingRemoteState)
+                return;
+
+            Vector3 p = __instance.transform.position;
+            Vector3 key = new Vector3(
+                Mathf.Round(p.x * 10f) / 10f,
+                Mathf.Round(p.y * 10f) / 10f,
+                Mathf.Round(p.z * 10f) / 10f);
+
+            ModRuntime.Network.SendPadlockUnlock(new PadlockUnlockMessage
+            {
+                PosX = key.x, PosY = key.y, PosZ = key.z
+            });
+            ModRuntime.Log?.LogInfo("[PadlockSync] unlock at " + key);
+        }
+    }
+
+    /// <summary>
+    /// Harmony patch: intercepts Locked.unlock() (key/lockpick unlock)
+    /// and broadcasts the unlock to all peers.
+    /// </summary>
+    [HarmonyPatch(typeof(Locked), "unlock")]
+    public static class LockedUnlockPatch
+    {
+        private static void Postfix(Locked __instance)
+        {
+            if (ModRuntime.Network == null)
+                return;
+
+            if (LanNetworkManager.IsApplyingRemoteState)
+                return;
+
+            Vector3 p = __instance.transform.position;
+            Vector3 key = new Vector3(
+                Mathf.Round(p.x * 10f) / 10f,
+                Mathf.Round(p.y * 10f) / 10f,
+                Mathf.Round(p.z * 10f) / 10f);
+
+            ModRuntime.Network.SendLockedUnlock(new LockedUnlockMessage
+            {
+                PosX = key.x, PosY = key.y, PosZ = key.z
+            });
+            ModRuntime.Log?.LogInfo("[LockedSync] unlock at " + key);
         }
     }
 }

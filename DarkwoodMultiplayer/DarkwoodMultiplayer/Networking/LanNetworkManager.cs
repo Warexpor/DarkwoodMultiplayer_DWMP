@@ -33,6 +33,7 @@ namespace DarkwoodMultiplayer.Networking
 
         private bool _remoteInBearTrap;
         private Vector3 _remoteBearTrapPos;
+        private bool _remoteHasLightProtection;
 
         public NetworkRole Role => _role;
         public bool IsConnected => _peer != null && _peer.ConnectionState == ConnectionState.Connected;
@@ -85,7 +86,7 @@ namespace DarkwoodMultiplayer.Networking
 
         public void StopNetwork()
         {
-            Sync.DialogFreezeManager.OnMorningEnded();
+            Sync.DialogFreezeManager.OnDisconnected();
             Sync.DreamSyncManager.OnDisconnected();
             DestroyRemoteProxy();
             _handshakeComplete = false;
@@ -189,7 +190,8 @@ namespace DarkwoodMultiplayer.Networking
                 TorsoFacingY = PlayerAnimationSnapshot.ReadTorsoFacingY(local),
                 TorsoClip = PlayerAnimationSnapshot.ReadTorsoClip(local),
                 LegsClip = PlayerAnimationSnapshot.ReadLegsClip(local),
-                InBearTrap = local.inBearTrap
+                InBearTrap = local.inBearTrap,
+                HasLightProtection = local.isInLight
             };
             Send(NetMessageType.PlayerState, w => msg.Serialize(w));
 
@@ -605,8 +607,29 @@ namespace DarkwoodMultiplayer.Networking
                 case NetMessageType.FinalDreamsceneDeath:
                     HandleFinalDreamsceneDeath(FinalDreamsceneDeathMessage.Deserialize(new NetReader(payload)));
                     break;
+                case NetMessageType.ConstructibleConstruction:
+                    HandleConstructible(ConstructibleMessage.Deserialize(new NetReader(payload)));
+                    break;
                 case NetMessageType.ClientStateBackup:
                     HandleClientStateBackup(ClientStateBackupMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.InteractiveItemSwitch:
+                    HandleInteractiveItemSwitch(InteractiveItemSwitchMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.PadlockUnlock:
+                    HandlePadlockUnlock(PadlockUnlockMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.LockedUnlock:
+                    HandleLockedUnlock(LockedUnlockMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.GameEventsFired:
+                    HandleGameEventsFired(GameEventsFiredMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.HideoutUpgrade:
+                    HandleHideoutUpgrade(HideoutUpgradeMessage.Deserialize(new NetReader(payload)));
+                    break;
+                case NetMessageType.DialogFreeze:
+                    HandleDialogFreeze(DialogFreezeMessage.Deserialize(new NetReader(payload)));
                     break;
                 }
             }
@@ -656,6 +679,7 @@ namespace DarkwoodMultiplayer.Networking
 
                 _remoteInBearTrap = state.InBearTrap;
                 _remoteBearTrapPos = new Vector3(state.PosX, state.PosY, state.PosZ);
+                _remoteHasLightProtection = state.HasLightProtection;
                 if (state.InBearTrap)
                     ModRuntime.Log?.LogInfo("[BearTrapState] host: remote player trapped at " + _remoteBearTrapPos);
 
@@ -696,6 +720,7 @@ namespace DarkwoodMultiplayer.Networking
             // Client receives host player state
             _remoteInBearTrap = state.InBearTrap;
             _remoteBearTrapPos = new Vector3(state.PosX, state.PosY, state.PosZ);
+            _remoteHasLightProtection = state.HasLightProtection;
             if (state.InBearTrap)
                 ModRuntime.Log?.LogInfo("[BearTrapState] client: host trapped at " + _remoteBearTrapPos);
 
@@ -728,6 +753,9 @@ namespace DarkwoodMultiplayer.Networking
         /// world pool trap), making the distance check unreliable.
         /// </summary>
         public bool RemoteInBearTrap => _remoteInBearTrap;
+
+        /// <summary>True when the remote peer has shadow protection (torch, lantern, LightArea, etc.).</summary>
+        public bool RemotePlayerHasLightProtection => _remoteHasLightProtection;
 
         public bool IsRemotePlayerTrappedNear(Vector3 trapPos)
         {
@@ -1097,6 +1125,177 @@ namespace DarkwoodMultiplayer.Networking
         {
             ModRuntime.Log?.LogInfo("[FinalDreamscene] Received remote death notification");
             Sync.FinalDreamsceneManager.OnRemoteDeathInDream();
+        }
+
+        private void HandleConstructible(ConstructibleMessage msg)
+        {
+            Vector3 pos = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
+            Constructible best = null;
+            float bestDist = 0.5f;
+            foreach (Constructible c in Resources.FindObjectsOfTypeAll<Constructible>())
+            {
+                if (c == null) continue;
+                float d = Vector3.Distance(c.transform.position, pos);
+                if (d < bestDist)
+                {
+                    bestDist = d;
+                    best = c;
+                }
+            }
+            if (best == null)
+            {
+                ModRuntime.Log?.LogWarning("[ConstructibleSync] no Constructible found near " + pos);
+                return;
+            }
+            ModRuntime.Log?.LogInfo("[ConstructibleSync] constructing " + best.name + " at " + pos);
+            best.construct(msg.UseIngredients, msg.OptionIndex);
+        }
+
+        private void HandleInteractiveItemSwitch(InteractiveItemSwitchMessage msg)
+        {
+            Vector3 pos = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
+            InteractiveItem best = null;
+            float bestDist = 0.5f;
+            foreach (InteractiveItem ii in Resources.FindObjectsOfTypeAll<InteractiveItem>())
+            {
+                if (ii == null) continue;
+                float d = Vector3.Distance(ii.transform.position, pos);
+                if (d < bestDist)
+                {
+                    bestDist = d;
+                    best = ii;
+                }
+            }
+            if (best == null)
+            {
+                ModRuntime.Log?.LogWarning("[InteractiveItemSync] no InteractiveItem found near " + pos);
+                return;
+            }
+            if (msg.IsOn && !best.isOn)
+                best.switchOn();
+            else if (!msg.IsOn && best.isOn)
+                best.switchOff();
+        }
+
+        private void HandlePadlockUnlock(PadlockUnlockMessage msg)
+        {
+            Vector3 pos = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
+            Padlock best = null;
+            float bestDist = 0.5f;
+            foreach (Padlock p in Resources.FindObjectsOfTypeAll<Padlock>())
+            {
+                if (p == null) continue;
+                float d = Vector3.Distance(p.transform.position, pos);
+                if (d < bestDist)
+                {
+                    bestDist = d;
+                    best = p;
+                }
+            }
+            if (best == null)
+            {
+                ModRuntime.Log?.LogWarning("[PadlockSync] no Padlock found near " + pos);
+                return;
+            }
+            if (best.locked)
+                best.unlock(false);
+        }
+
+        private void HandleLockedUnlock(LockedUnlockMessage msg)
+        {
+            Vector3 pos = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
+            Locked best = null;
+            float bestDist = 0.5f;
+            foreach (Locked l in Resources.FindObjectsOfTypeAll<Locked>())
+            {
+                if (l == null) continue;
+                float d = Vector3.Distance(l.transform.position, pos);
+                if (d < bestDist)
+                {
+                    bestDist = d;
+                    best = l;
+                }
+            }
+            if (best == null)
+            {
+                ModRuntime.Log?.LogWarning("[LockedSync] no Locked found near " + pos);
+                return;
+            }
+            if (best.locked)
+                best.unlock();
+        }
+
+        private void HandleGameEventsFired(GameEventsFiredMessage msg)
+        {
+            if (_role != NetworkRole.Client)
+                return;
+
+            Vector3 pos = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
+            GameEvents best = null;
+            float bestDist = 0.5f;
+            foreach (GameEvents ge in Resources.FindObjectsOfTypeAll<GameEvents>())
+            {
+                if (ge == null) continue;
+                float d = Vector3.Distance(ge.transform.position, pos);
+                if (d < bestDist)
+                {
+                    bestDist = d;
+                    best = ge;
+                }
+            }
+            if (best == null)
+            {
+                ModRuntime.Log?.LogWarning("[GameEventsSync] no GameEvents found near " + pos);
+                return;
+            }
+
+            // Only execute child events on the client if the event location is
+            // within audible range — otherwise effects would play at the host's
+            // distant location, wasting CPU and potentially causing issues
+            // (inventory changes, teleports, dialogues, etc.).
+            if (Player.Instance != null)
+            {
+                float dist = Vector3.Distance(Player.Instance.transform.position, pos);
+                if (dist > 500f)
+                {
+                    ModRuntime.Log?.LogInfo("[GameEventsSync] too far (" + dist + "), setting fired flag only");
+                    best.fired = true;
+                    return;
+                }
+            }
+
+            // Call fire() so the client also executes child events (spawns, sounds,
+            // animations, etc.) if this event hasn't fired locally yet.
+            // If the client already fired it (e.g., via a synced player action),
+            // fire() returns early due to the fired+!multipleFire guard.
+            best.fire();
+        }
+
+        private void HandleHideoutUpgrade(HideoutUpgradeMessage msg)
+        {
+            Vector3 pos = new Vector3(msg.PosX, msg.PosY, msg.PosZ);
+            ExperienceMachine best = null;
+            float bestDist = 0.5f;
+            foreach (ExperienceMachine em in Resources.FindObjectsOfTypeAll<ExperienceMachine>())
+            {
+                if (em == null) continue;
+                float d = Vector3.Distance(em.transform.position, pos);
+                if (d < bestDist)
+                {
+                    bestDist = d;
+                    best = em;
+                }
+            }
+            if (best == null)
+            {
+                ModRuntime.Log?.LogWarning("[HideoutUpgrade] no ExperienceMachine found near " + pos);
+                return;
+            }
+
+            if (msg.IsOn && !best.isOn)
+                best.enable();
+            else if (!msg.IsOn && best.isOn)
+                best.disable();
         }
 
         private void HandleContainerItem(ContainerItemMessage msg)
@@ -1609,6 +1808,48 @@ namespace DarkwoodMultiplayer.Networking
             Send(NetMessageType.ExplosionSpawnObject, w => msg.Serialize(w), DeliveryMethod.ReliableOrdered);
         }
 
+        public void SendConstructible(ConstructibleMessage msg)
+        {
+            if (!IsConnected) return;
+            if (IsApplyingRemoteState) return;
+            Send(NetMessageType.ConstructibleConstruction, w => msg.Serialize(w), DeliveryMethod.ReliableOrdered);
+        }
+
+        public void SendInteractiveItemSwitch(InteractiveItemSwitchMessage msg)
+        {
+            if (!IsConnected) return;
+            if (IsApplyingRemoteState) return;
+            Send(NetMessageType.InteractiveItemSwitch, w => msg.Serialize(w), DeliveryMethod.ReliableOrdered);
+        }
+
+        public void SendPadlockUnlock(PadlockUnlockMessage msg)
+        {
+            if (!IsConnected) return;
+            if (IsApplyingRemoteState) return;
+            Send(NetMessageType.PadlockUnlock, w => msg.Serialize(w), DeliveryMethod.ReliableOrdered);
+        }
+
+        public void SendLockedUnlock(LockedUnlockMessage msg)
+        {
+            if (!IsConnected) return;
+            if (IsApplyingRemoteState) return;
+            Send(NetMessageType.LockedUnlock, w => msg.Serialize(w), DeliveryMethod.ReliableOrdered);
+        }
+
+        public void SendGameEventsFired(GameEventsFiredMessage msg)
+        {
+            if (!IsConnected) return;
+            if (IsApplyingRemoteState) return;
+            Send(NetMessageType.GameEventsFired, w => msg.Serialize(w), DeliveryMethod.ReliableOrdered);
+        }
+
+        public void SendHideoutUpgrade(HideoutUpgradeMessage msg)
+        {
+            if (!IsConnected) return;
+            if (IsApplyingRemoteState) return;
+            Send(NetMessageType.HideoutUpgrade, w => msg.Serialize(w), DeliveryMethod.ReliableOrdered);
+        }
+
         public void SendGeneratorState(GeneratorState gs)
         {
             if (!IsConnected) return;
@@ -1853,13 +2094,22 @@ namespace DarkwoodMultiplayer.Networking
         }
 
         /// <summary>
-        /// Handles a hideout dialog state change from the remote player.
-        /// Freezes or unfreezes the local world so both players' worlds
-        /// are frozen when either is in an NPC dialog during morning.
+        /// Handles a hideout dialog state change (legacy message type).
+        /// Redirects to the general dialog freeze handler.
         /// </summary>
         private void HandleHideoutDialogState(HideoutDialogStateMessage msg)
         {
-            Sync.DialogFreezeManager.OnRemoteDialogState(msg.InDialog);
+            Sync.DialogFreezeManager.OnRemoteFreezeState(msg.InDialog);
+        }
+
+        /// <summary>
+        /// Handles a dialog freeze/unfreeze message from the host.
+        /// Force-freezes or unfreezes the local world so both players
+        /// experience the frozen visual effect during NPC dialog.
+        /// </summary>
+        private void HandleDialogFreeze(DialogFreezeMessage msg)
+        {
+            Sync.DialogFreezeManager.OnRemoteFreezeState(msg.Frozen);
         }
 
         /// <summary>
@@ -2140,12 +2390,12 @@ namespace DarkwoodMultiplayer.Networking
             if (_role != NetworkRole.Host || !IsConnected)
                 return;
 
+            var ctrl = Singleton<Controller>.Instance;
             var msg = new TimeSyncMessage
             {
-                CurrentTime = Singleton<Controller>.Instance != null
-                    ? Singleton<Controller>.Instance.CurrentTime : 0,
-                Day = Singleton<Controller>.Instance != null
-                    ? Singleton<Controller>.Instance.day : 1
+                CurrentTime = ctrl != null ? ctrl.CurrentTime : 0,
+                Day = ctrl != null ? ctrl.day : 1,
+                IsAfterNight = ctrl != null && ctrl.isAfterNight
             };
             Send(NetMessageType.TimeSync, w => msg.Serialize(w));
         }
@@ -2158,11 +2408,19 @@ namespace DarkwoodMultiplayer.Networking
             Controller ctrl = Singleton<Controller>.Instance;
             if (ctrl == null) return;
 
+            // Sync isAfterNight — end the morning hideout freeze on the
+            // client when the host leaves the hideout area
+            if (ctrl.isAfterNight && !msg.IsAfterNight)
+            {
+                ctrl.isAfterNight = false;
+                ctrl.removeAfterNightEffect();
+            }
+
             ctrl.CurrentTime = msg.CurrentTime;
             ctrl.day = msg.Day;
             ctrl.refreshTime();
 
-            ModRuntime.Log?.LogInfo($"[TimeSync] synced time to day={msg.Day} time={msg.CurrentTime}");
+            ModRuntime.Log?.LogInfo($"[TimeSync] synced time to day={msg.Day} time={msg.CurrentTime} isAfterNight={msg.IsAfterNight}");
         }
 
         private void HandleEntitySound(EntitySoundMessage msg)

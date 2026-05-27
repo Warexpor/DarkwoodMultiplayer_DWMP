@@ -124,7 +124,21 @@ namespace DarkwoodMultiplayer.Networking
         /// <summary>Dreamer→Spectator: an audio clip was played in the dream (forwarded for spectator to hear).</summary>
         DreamAudio = 59,
         /// <summary>Either peer: a player died in the Final Dreamscene (epilogue).</summary>
-        FinalDreamsceneDeath = 60
+        FinalDreamsceneDeath = 60,
+        /// <summary>Either peer: a Constructible object was built (construction menu).</summary>
+        ConstructibleConstruction = 61,
+        /// <summary>Either peer: an InteractiveItem (lever/switch) was toggled.</summary>
+        InteractiveItemSwitch = 62,
+        /// <summary>Either peer: a Padlock was unlocked (correct combination entered).</summary>
+        PadlockUnlock = 63,
+        /// <summary>Either peer: a Locked component was unlocked (key/lockpick).</summary>
+        LockedUnlock = 64,
+        /// <summary>Host→Client: a GameEvents component was fired (authoritative).</summary>
+        GameEventsFired = 65,
+        /// <summary>Either peer: an ExperienceMachine (hideout oven) was enabled.</summary>
+        HideoutUpgrade = 66,
+        /// <summary>Host→Client: force-freeze/unfreeze the remote player's world for NPC dialog.</summary>
+        DialogFreeze = 67
     }
 
     /// <summary>
@@ -631,6 +645,8 @@ namespace DarkwoodMultiplayer.Networking
         public string LegsClip;
         /// <summary>Whether the player is currently trapped in a bear trap.</summary>
         public bool InBearTrap;
+        /// <summary>Whether the player has light-based shadow protection (torch, lantern, LightArea, etc.).</summary>
+        public bool HasLightProtection;
 
         /// <summary>Serializes this message into the provided writer.</summary>
         public void Serialize(NetWriter writer)
@@ -649,6 +665,7 @@ namespace DarkwoodMultiplayer.Networking
             writer.Put(TorsoClip);
             writer.Put(LegsClip);
             writer.Put(InBearTrap);
+            writer.Put(HasLightProtection);
         }
 
         /// <summary>Deserializes a PlayerStateMessage from the provided reader.</summary>
@@ -669,7 +686,8 @@ namespace DarkwoodMultiplayer.Networking
                 TorsoFacingY = reader.GetShort(),
                 TorsoClip = reader.GetString(),
                 LegsClip = reader.GetString(),
-                InBearTrap = reader.GetBool()
+                InBearTrap = reader.GetBool(),
+                HasLightProtection = reader.GetBool()
             };
         }
     }
@@ -1533,19 +1551,23 @@ namespace DarkwoodMultiplayer.Networking
         public int CurrentTime;
         /// <summary>Current in-game day number.</summary>
         public int Day;
+        /// <summary>Whether the morning hideout freeze (isAfterNight) is active.</summary>
+        public bool IsAfterNight;
 
         /// <summary>Serializes this message into the provided writer.</summary>
         public void Serialize(NetWriter w)
         {
             w.Put(CurrentTime);
             w.Put(Day);
+            w.Put(IsAfterNight);
         }
 
         /// <summary>Deserializes a TimeSyncMessage from the provided reader.</summary>
         public static TimeSyncMessage Deserialize(NetReader r) => new TimeSyncMessage
         {
             CurrentTime = r.GetInt(),
-            Day = r.GetInt()
+            Day = r.GetInt(),
+            IsAfterNight = r.GetBool()
         };
     }
 
@@ -2127,6 +2149,142 @@ namespace DarkwoodMultiplayer.Networking
         public static FinalDreamsceneDeathMessage Deserialize(NetReader r) => new FinalDreamsceneDeathMessage
         {
             IsDead = r.GetBool()
+        };
+    }
+
+    /// <summary>Either peer: a Constructible object was built (construction menu).</summary>
+    public struct ConstructibleMessage
+    {
+        /// <summary>Rounded world position X (lookup key).</summary>
+        public float PosX;
+        /// <summary>Rounded world position Y.</summary>
+        public float PosY;
+        /// <summary>Rounded world position Z.</summary>
+        public float PosZ;
+        /// <summary>Whether to consume ingredients (passed to Constructible.construct).</summary>
+        public bool UseIngredients;
+        /// <summary>Option index (which variant to build).</summary>
+        public int OptionIndex;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(PosX); w.Put(PosY); w.Put(PosZ);
+            w.Put(UseIngredients);
+            w.Put(OptionIndex);
+        }
+
+        public static ConstructibleMessage Deserialize(NetReader r) => new ConstructibleMessage
+        {
+            PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat(),
+            UseIngredients = r.GetBool(),
+            OptionIndex = r.GetInt()
+        };
+    }
+
+    public struct InteractiveItemSwitchMessage
+    {
+        public float PosX, PosY, PosZ;
+        public bool IsOn;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(PosX); w.Put(PosY); w.Put(PosZ);
+            w.Put(IsOn);
+        }
+
+        public static InteractiveItemSwitchMessage Deserialize(NetReader r) => new InteractiveItemSwitchMessage
+        {
+            PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat(),
+            IsOn = r.GetBool()
+        };
+    }
+
+    public struct PadlockUnlockMessage
+    {
+        public float PosX, PosY, PosZ;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(PosX); w.Put(PosY); w.Put(PosZ);
+        }
+
+        public static PadlockUnlockMessage Deserialize(NetReader r) => new PadlockUnlockMessage
+        {
+            PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat()
+        };
+    }
+
+    public struct LockedUnlockMessage
+    {
+        public float PosX, PosY, PosZ;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(PosX); w.Put(PosY); w.Put(PosZ);
+        }
+
+        public static LockedUnlockMessage Deserialize(NetReader r) => new LockedUnlockMessage
+        {
+            PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat()
+        };
+    }
+
+    /// <summary>
+    /// Host→Client: a GameEvents component was fired. The client calls fire()
+    /// to also execute child events (sounds, animations, spawns) locally.
+    /// </summary>
+    public struct GameEventsFiredMessage
+    {
+        public float PosX, PosY, PosZ;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(PosX); w.Put(PosY); w.Put(PosZ);
+        }
+
+        public static GameEventsFiredMessage Deserialize(NetReader r) => new GameEventsFiredMessage
+        {
+            PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat()
+        };
+    }
+
+    /// <summary>
+    /// Either peer: an ExperienceMachine (hideout oven) was enabled,
+    /// syncing the on/off state of the machine.
+    /// </summary>
+    public struct HideoutUpgradeMessage
+    {
+        public float PosX, PosY, PosZ;
+        public bool IsOn;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(PosX); w.Put(PosY); w.Put(PosZ);
+            w.Put(IsOn);
+        }
+
+        public static HideoutUpgradeMessage Deserialize(NetReader r) => new HideoutUpgradeMessage
+        {
+            PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat(),
+            IsOn = r.GetBool()
+        };
+    }
+
+    /// <summary>
+    /// Host→Client: force-freeze/unfreeze the remote player's world when
+    /// the host opens/closes an NPC dialog. Uses force-unfreeze to bypass
+    /// inMenu() gating on the remote side.
+    /// </summary>
+    public struct DialogFreezeMessage
+    {
+        /// <summary>True to freeze, false to unfreeze.</summary>
+        public bool Frozen;
+
+        public void Serialize(NetWriter w) => w.Put(Frozen);
+
+        public static DialogFreezeMessage Deserialize(NetReader r) => new DialogFreezeMessage
+        {
+            Frozen = r.GetBool()
         };
     }
 }

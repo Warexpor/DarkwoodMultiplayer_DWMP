@@ -171,7 +171,6 @@
         <Compile Include="Patches\NightDeathPatches.cs"/>
         <Compile Include="Patches\FlagSyncPatches.cs"/>
         <Compile Include="Patches\TradeSyncPatches.cs"/>
-        <Compile Include="Patches\HideoutDialogSyncPatches.cs"/>
         <Compile Include="Patches\MorningRepPatch.cs"/>
         <Compile Include="Patches\DialogueStateSyncPatch.cs"/>
         <Compile Include="Patches\DialogSyncPatches.cs"/>
@@ -189,6 +188,7 @@
         <Compile Include="Sync\EntityTrackers.cs"/>
         <Compile Include="Sync\PrefabPathComponent.cs"/>
         <Compile Include="Sync\PushableEntity.cs"/>
+        <Compile Include="Sync\FreezeTracker.cs"/>
         <Compile Include="Sync\DialogFreezeManager.cs"/>
         <Compile Include="Sync\NPCDialogueSyncHandler.cs"/>
         <Compile Include="Sync\DialogSyncManager.cs"/>
