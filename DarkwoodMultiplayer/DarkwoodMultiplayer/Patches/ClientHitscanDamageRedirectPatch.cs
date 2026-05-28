@@ -17,6 +17,10 @@ namespace DarkwoodMultiplayer.Patches
                 if (net == null || net.Role != NetworkRole.Client)
                     return true;
 
+                // During a local dream, let vanilla handle damage
+                if (DreamSyncManager.IsLocalDreamActive)
+                    return true;
+
                 bool isPlayerDamage = attackerTransform != null && Player.Instance != null && attackerTransform == Player.Instance.transform;
                 bool isProjectileDamage = attackerTransform == null && TraverseHack.IsInsidePlayerBulletCollision;
                 bool isExplosionAOE = TraverseHack.IsInsideLocalExplosion;

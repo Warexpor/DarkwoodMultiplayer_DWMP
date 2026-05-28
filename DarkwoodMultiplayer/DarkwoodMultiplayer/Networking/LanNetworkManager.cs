@@ -3185,10 +3185,15 @@ namespace DarkwoodMultiplayer.Networking
                             }
                         }
 
-                        // Wire up per-frame emitter positioning
+                        // Wire up per-frame emitter positioning and force an immediate
+                        // update so emitters snap to the correct position even before
+                        // the first LateUpdate runs.
                         var animCtrl = _remoteProxy.GetComponent<Players.SecondPlayerAnimController>();
                         if (animCtrl != null)
+                        {
                             animCtrl.SetEmittedItem(itemDef);
+                            animCtrl.UpdateEmitterPosition();
+                        }
                     }
                     else
                     {
@@ -3523,13 +3528,19 @@ namespace DarkwoodMultiplayer.Networking
 
             ModRuntime.Log?.LogInfo($"[BulletFX] HandleBulletImpact: {msg.PrefabName} pool={msg.PoolName} pos={pos}");
 
-            if (string.IsNullOrEmpty(msg.PoolName))
+            // Wrap in ApplyingFromNetwork to prevent HitscanBloodPatch and similar
+            // patches from re-forwarding this blood back to the sender.
+            TraverseHack.ApplyingFromNetwork = true;
+            try
             {
-                Core.AddPrefab(msg.PrefabName, pos, rot, null);
+                if (string.IsNullOrEmpty(msg.PoolName))
+                    Core.AddPrefab(msg.PrefabName, pos, rot, null);
+                else
+                    Core.AddPooledPrefab(msg.PoolName, msg.PrefabName, pos, rot);
             }
-            else
+            finally
             {
-                Core.AddPooledPrefab(msg.PoolName, msg.PrefabName, pos, rot);
+                TraverseHack.ApplyingFromNetwork = false;
             }
         }
 

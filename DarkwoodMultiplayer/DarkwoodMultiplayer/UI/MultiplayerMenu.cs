@@ -3,10 +3,6 @@ using UnityEngine;
 
 namespace DarkwoodMultiplayer
 {
-    /// <summary>
-    /// In-game IMGUI overlay for LAN multiplayer: host, connect, disconnect.
-    /// Toggle with M, F2, F3, Home, or Insert.
-    /// </summary>
     public sealed class MultiplayerMenu : MonoBehaviour
     {
         private static MultiplayerMenu _instance;
@@ -22,14 +18,12 @@ namespace DarkwoodMultiplayer
 
         private static float UiScale => Mathf.Clamp(Screen.height / 900f, 1f, 2f);
 
-        /// <summary>Toggle menu visibility.</summary>
         public static void ToggleVisible()
         {
             if (_instance != null)
                 _instance._visible = !_instance._visible;
         }
 
-        /// <summary>Ensure the persistent menu GameObject exists.</summary>
         public static void EnsureExists()
         {
             if (_instance != null)
@@ -45,7 +39,7 @@ namespace DarkwoodMultiplayer
         {
             float scale = UiScale;
             float width = Mathf.Clamp(540f * scale, 440f, Screen.width * 0.65f);
-            float height = Mathf.Clamp(520f * scale, 440f, Screen.height * 0.7f);
+            float height = Mathf.Clamp(580f * scale, 440f, Screen.height * 0.7f);
             _windowRect = new Rect(24f, 24f, width, height);
             _windowRectInitialized = true;
         }
@@ -119,7 +113,7 @@ namespace DarkwoodMultiplayer
 
             GUILayout.Space(12f);
             GUILayout.Label("Config file: BepInEx/config/" + PluginInfo.Guid + ".cfg", GUILayout.ExpandWidth(true));
-            GUILayout.Label("Menu toggle: M, F2, F3, Home, or Insert", GUILayout.ExpandWidth(true));
+            GUILayout.Label("F2=menu, F3=save, F4=spectator, F5=debug", GUILayout.ExpandWidth(true));
 
             GUILayout.EndScrollView();
 

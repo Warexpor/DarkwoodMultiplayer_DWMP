@@ -509,6 +509,7 @@ namespace DarkwoodMultiplayer.Networking
             }
 
             // 3. Clean up unmatched client-only entities
+            if (DreamSyncManager.IsLocalDreamActive) return;
             // After receiving the first host snapshot + grace period, destroy any
             // character that exists only on the client (not in host's save/night spawns).
             // This prevents ghost entities when host and client have divergent saves.

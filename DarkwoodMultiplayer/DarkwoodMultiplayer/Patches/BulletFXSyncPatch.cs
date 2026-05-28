@@ -45,14 +45,9 @@ namespace DarkwoodMultiplayer.Patches
             if (prefab == null) return;
             if (!prefab.StartsWith("FX/Bloodsplats/")) return;
 
-            Player player = Player.Instance;
-            if (player == null) { ModRuntime.Log?.LogInfo("[BloodPatch] no player"); return; }
-            if (InvItemClass.isNull(player.currentItem)) { ModRuntime.Log?.LogInfo("[BloodPatch] no currentItem"); return; }
-            if (!player.currentItem.baseClass.isFirearm) { ModRuntime.Log?.LogInfo("[BloodPatch] not firearm"); return; }
-            if (player.currentItem.baseClass.item != null) { ModRuntime.Log?.LogInfo("[BloodPatch] projectile weapon, skip"); return; }
-
-            ModRuntime.Log?.LogInfo("[BloodPatch] forwarding " + prefab + " pos=" + position);
-
+            // Forward all blood splatters — from entity hits, player damage,
+            // friendly fire, anything. The ApplyingFromNetwork guard above
+            // prevents re-forwarding when the other peer receives the message.
             net.SendBulletImpact(new BulletImpactMessage
             {
                 PrefabName = prefab,

@@ -41,7 +41,7 @@ namespace DarkwoodMultiplayer
                 Log.LogInfo("================================================");
                 Log.LogInfo("  " + PluginInfo.Name + " v" + PluginInfo.DisplayVersion);
                 Log.LogInfo("  Config: BepInEx/config/" + PluginInfo.Guid + ".cfg");
-                Log.LogInfo("  F2=menu, F3=save, F4=spectator, F5=debug tools");
+                Log.LogInfo("  F2=menu, F3=save, F4=spectator, F5=debug");
                 Log.LogInfo("================================================");
 
                 EnsureRunning();

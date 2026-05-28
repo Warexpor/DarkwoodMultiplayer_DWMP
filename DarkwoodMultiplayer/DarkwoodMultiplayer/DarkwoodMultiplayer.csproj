@@ -131,6 +131,7 @@
         <Compile Include="UI\MultiplayerMenu.cs"/>
         <Compile Include="UI\ManualSaveGUI.cs"/>
         <Compile Include="UI\SpectatorModeController.cs"/>
+        <Compile Include="UI\DreamChoiceGUI.cs"/>
         <Compile Include="Patches\InputScriptPatches.cs"/>
         <Compile Include="Patches\PlayerUpdatePatch.cs"/>
         <Compile Include="Patches\PlayerInventoryPatches.cs"/>

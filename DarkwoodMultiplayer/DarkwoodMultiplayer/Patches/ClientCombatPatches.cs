@@ -70,6 +70,10 @@ namespace DarkwoodMultiplayer.Patches
             if (__instance.type != MeleeSensor.MeleeSensorType.player)
                 return true;
 
+            // During a local dream, let vanilla handle interactions
+            if (DreamSyncManager.IsLocalDreamActive)
+                return true;
+
             // Skip proxy hits — ClientFriendlyFirePatch handles those
             if (_collider.GetComponentInParent<RemotePlayerProxy>() != null)
                 return true;

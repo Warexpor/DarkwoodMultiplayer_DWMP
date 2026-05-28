@@ -125,7 +125,7 @@ namespace DarkwoodMultiplayer.Players
             _emitterItem = null;
         }
 
-        private void UpdateEmitterPosition()
+        internal void UpdateEmitterPosition()
         {
             if (_emitterItem == null || _torsoAnimator == null)
                 return;
@@ -136,27 +136,29 @@ namespace DarkwoodMultiplayer.Players
 
             string clipName = _torsoAnimator.CurrentClip?.name;
             if (string.IsNullOrEmpty(clipName))
-                return;
-
-            if (!ep.typesDict.TryGetValue(clipName, out var entry))
             {
-                // Clip not in dictionary — reset to origin
+                // Animator hasn't started yet — try "Idle" as a fallback so emitters
+                // appear at a reasonable position (above the player) from frame 1.
+                // If "Idle" isn't in the dict either there is nothing we can do.
+                if (!ep.typesDict.TryGetValue("Idle", out var idleEntry))
+                    return;
+                int f = _torsoAnimator != null ? _torsoAnimator.CurrentFrame : 0;
+                if (idleEntry.positions == null || idleEntry.positions.Count <= f)
+                    return;
+                Vector2 p = idleEntry.positions[f];
                 if (_lightEmitter != null)
-                    _lightEmitter.localPosition = new Vector3(0f, 0f, _lightEmitter.localPosition.z);
+                    _lightEmitter.localPosition = new Vector3(p.x, p.y, _lightEmitter.localPosition.z);
                 if (_particleEmitter != null)
-                    _particleEmitter.localPosition = new Vector3(0f, 0f, _particleEmitter.localPosition.z);
+                    _particleEmitter.localPosition = new Vector3(p.x, p.y, _particleEmitter.localPosition.z);
                 return;
             }
+
+            if (!ep.typesDict.TryGetValue(clipName, out var entry))
+                return; // keep current position (don't snap to origin)
 
             int frame = _torsoAnimator.CurrentFrame;
             if (entry.positions == null || entry.positions.Count <= frame)
-            {
-                if (_lightEmitter != null)
-                    _lightEmitter.localPosition = new Vector3(0f, 0f, _lightEmitter.localPosition.z);
-                if (_particleEmitter != null)
-                    _particleEmitter.localPosition = new Vector3(0f, 0f, _particleEmitter.localPosition.z);
-                return;
-            }
+                return; // keep current position
 
             Vector2 pos = entry.positions[frame];
             if (_lightEmitter != null)

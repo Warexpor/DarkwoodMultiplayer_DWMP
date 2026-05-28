@@ -45,6 +45,10 @@ namespace DarkwoodMultiplayer.Patches
                 return true;
             }
 
+            // During a local dream, let vanilla handle dialog interactions
+            if (DreamSyncManager.IsLocalDreamActive)
+                return true;
+
             // Client: if not mirroring, send join request and skip local dialog
             if (DialogSyncManager.IsMirroring)
             {

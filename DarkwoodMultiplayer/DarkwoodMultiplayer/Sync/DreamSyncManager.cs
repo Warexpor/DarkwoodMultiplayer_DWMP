@@ -1,6 +1,5 @@
 using DarkwoodMultiplayer.Networking;
 using DarkwoodMultiplayer.Players;
-using DarkwoodMultiplayer.Spectator;
 using System;
 using System.Collections;
 using UnityEngine;
@@ -18,6 +17,7 @@ namespace DarkwoodMultiplayer.Sync
         private static string _preDreamGridName;
 
         public static bool IsDreamActive => _localDreamActive || _remoteDreamActive;
+        public static bool IsLocalDreamActive => _localDreamActive;
         public static bool IsDualPresence => _isDualPresence;
         public static string CurrentDreamPreset => _currentDreamPreset;
 
@@ -81,23 +81,27 @@ namespace DarkwoodMultiplayer.Sync
             if (FinalDreamsceneManager.IsDeathTrackedDream(presetName))
                 FinalDreamsceneManager.OnDreamStarted();
 
-            SavePreDreamState();
-
             ModRuntime.Log?.LogInfo($"[DreamSync] Remote dream started: {presetName}, dualPresence={_isDualPresence}, pos={locationPosition}");
 
             if (_isDualPresence)
             {
-                ApplyDreamCameraEffects(presetName);
-                ShowDreamTransition();
-                Singleton<Controller>.Instance.StartCoroutine(LoadDreamSceneCoroutine(presetName, locationPosition, false));
+                // Dual-presence (epilogue): both players enter the dream together.
+                SavePreDreamState();
+                ProcessRemoteDream(locationPosition);
                 return;
             }
 
+            // Regular dream: non-dreamer just freezes until it ends.
+            // No scene loading, no spectating — loading the dream scene on either
+            // side causes WorldGrid conflicts and entity sync desyncs.
             ApplyDreamFreeze();
-            ApplyDreamCameraEffects(presetName);
-            ShowDreamTransition();
+        }
 
-            Singleton<Controller>.Instance.StartCoroutine(LoadDreamSceneCoroutine(presetName, locationPosition, false));
+        private static void ProcessRemoteDream(Vector3 locationPosition)
+        {
+            ApplyDreamCameraEffects(_currentDreamPreset);
+            ShowDreamTransition();
+            Singleton<Controller>.Instance.StartCoroutine(LoadDreamSceneCoroutine(_currentDreamPreset, locationPosition, false));
         }
 
         public static void OnRemoteDreamEnded()
@@ -111,32 +115,16 @@ namespace DarkwoodMultiplayer.Sync
 
             ModRuntime.Log?.LogInfo($"[DreamSync] Remote dream ended: {_currentDreamPreset}");
 
-            if (!_isDualPresence)
+            if (_isDualPresence)
             {
-                var spec = SpectatorModeController.Instance;
-                if (spec != null && spec.IsSpectating)
-                {
-                    spec.ForceExit();
-                    var cam = Singleton<CamMain>.Instance;
-                    var player = Player.Instance;
-                    if (cam != null && player != null)
-                        cam.followTarget = player.transform;
-                }
-            }
-
-            CleanupDreamScene(_currentDreamPreset);
-
-            if (!_isDualPresence)
-            {
+                CleanupDreamScene(_currentDreamPreset);
                 RemoveDreamCameraEffects(_currentDreamPreset);
-                RemoveDreamFreeze();
+                RestorePreDreamState();
             }
             else
             {
-                RemoveDreamCameraEffects(_currentDreamPreset);
+                RemoveDreamFreeze();
             }
-
-            RestorePreDreamState();
 
             _currentDreamPreset = null;
             _isDualPresence = false;
@@ -148,29 +136,16 @@ namespace DarkwoodMultiplayer.Sync
 
             if (_remoteDreamActive)
             {
-                if (!_isDualPresence)
+                if (_isDualPresence)
                 {
-                    var spec = SpectatorModeController.Instance;
-                    if (spec != null && spec.IsSpectating)
-                    {
-                        spec.ForceExit();
-                        var cam = Singleton<CamMain>.Instance;
-                        var player = Player.Instance;
-                        if (cam != null && player != null)
-                            cam.followTarget = player.transform;
-                    }
-                }
-                CleanupDreamScene(_currentDreamPreset);
-                if (!_isDualPresence)
-                {
+                    CleanupDreamScene(_currentDreamPreset);
                     RemoveDreamCameraEffects(_currentDreamPreset);
-                    RemoveDreamFreeze();
+                    RestorePreDreamState();
                 }
                 else
                 {
-                    RemoveDreamCameraEffects(_currentDreamPreset);
+                    RemoveDreamFreeze();
                 }
-                RestorePreDreamState();
             }
             _localDreamActive = false;
             _remoteDreamActive = false;
@@ -232,18 +207,8 @@ namespace DarkwoodMultiplayer.Sync
                 ? component.playerSpawn.transform.position
                 : position;
 
-            if (_isDualPresence)
-            {
-                player.teleportTo(spawnPos, Quaternion.Euler(90f, 0f, 0f));
-                ApplyDreamCameraEffects(locationName);
-            }
-            else
-            {
-                player.switchVisibilty(false);
-                player.immobilise();
-                player.invulnerable = true;
-                player.teleportTo(spawnPos, Quaternion.Euler(90f, 0f, 0f));
-            }
+            player.teleportTo(spawnPos, Quaternion.Euler(90f, 0f, 0f));
+            ApplyDreamCameraEffects(locationName);
 
             if (Singleton<WorldGrid>.Instance != null)
             {
@@ -251,11 +216,6 @@ namespace DarkwoodMultiplayer.Sync
                     Singleton<WorldGrid>.Instance.currentGrid.leave();
                 Singleton<WorldGrid>.Instance.setGrid(locationName);
                 Singleton<WorldGrid>.Instance.refreshPosition(player._transform.position, instant: true, force: true);
-            }
-
-            if (!_isDualPresence)
-            {
-                EnterDreamSpectator();
             }
 
             ModRuntime.Log?.LogInfo($"[DreamSync] Player positioned at dream location: {locationName}");
@@ -402,30 +362,6 @@ namespace DarkwoodMultiplayer.Sync
             {
                 ModRuntime.Log?.LogWarning($"[DreamSync] Failed to remove camera effects: {ex.Message}");
             }
-        }
-
-        private static void EnterDreamSpectator()
-        {
-            var net = ModRuntime.Network as LanNetworkManager;
-            if (net == null) return;
-
-            Transform followTarget;
-            if (net.Role == NetworkRole.Host)
-                followTarget = net.RemoteProxyTransform;
-            else
-            {
-                var proxy = RemotePlayerProxy.Instance;
-                followTarget = proxy?.transform;
-            }
-
-            if (followTarget == null)
-            {
-                ModRuntime.Log?.LogWarning("[DreamSync] No remote target for dream spectator");
-                return;
-            }
-
-            SpectatorModeController.EnsureExists();
-            SpectatorModeController.Instance.ForceEnter(followTarget);
         }
 
         private static void ShowDreamTransition()

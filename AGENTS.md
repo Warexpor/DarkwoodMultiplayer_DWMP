@@ -242,3 +242,64 @@ Fix: `ClientEntityInterpolationService` now:
 4. Client receives `ShadowSpawnMessage` → creates shadow at exact host position with Float animation
 5. Client receives `ShadowStateUpdateMessage` every 0.3s → updates shadow position + distanceToPlayer
 6. When shadow dies on host → `HostShadowDiePatch` unregisters it → next broadcast won't include it → client receives `dead=true` → plays Death1 animation → removed from lookup
+
+---
+
+## Session 2026-05-28 — Torch/light sync, dream choice popup, blood splatter sync
+
+### Torch/light sync fix
+- `SecondPlayerAnimController.UpdateEmitterPosition()`:
+  - Falls back to "Idle" clip position when `CurrentClip` is null
+  - Keeps current position instead of resetting to `(0,0,0)` for unknown clips / OOB frames
+  - Made `internal` so `LanNetworkManager` can call it
+- `HandlePlayerLightState` calls `SetEmittedItem()` then immediately calls `animCtrl.UpdateEmitterPosition()` so emitters snap to correct offset frame-1
+
+### Dream choice popup
+- New `UI/DreamChoiceGUI.cs`: OnGUI popup with Spectate (default) / Join buttons + 15s timeout
+- `DreamSyncManager.OnRemoteDreamStarted()` now shows popup for regular dreams instead of immediate freeze
+- Dual-presence dreams and epilogue still auto-join (no popup)
+- `_pendingChoiceActive` tracked; `DreamChoiceGUI.Hide()` called on `OnRemoteDreamEnded()` and `OnDisconnected()`
+
+### Dream spectate — position sync
+- **Problem**: Host choosing Spectate would have camera follow the client's proxy (regular world) instead of staying in the dream scene → host saw regular world with dream camera effects
+- **Fix**: `EnterDreamSpectator()` now uses `_dreamSpectatorTarget` (a hidden DontDestroyOnLoad GameObject) as the follow target when `_remoteDreamActive && !_isDualPresence`, instead of the remote proxy
+- **Dreamer position sync**: `DreamPositionUpdateMessage` (type 79) sent by the dreamer at 10 Hz. `HandleDreamPositionUpdate()` updates the spectator target position on the receiving end.
+- `StartDreamPositionSync()` / `StopDreamPositionSync()` coroutine in `DreamSyncManager` manages the send loop
+
+### Blood splatter sync (comprehensive)
+- `HitscanBloodPatch` (Prefix on `Core.AddPrefab("FX/Bloodsplats/*")`):
+  - **Removed** `player.currentItem.isFirearm` and `item != null` guards
+  - Now forwards ALL `FX/Bloodsplats/*` prefabs — from entity hits, player damage, friendly fire, enemy-vs-enemy
+  - `ApplyingFromNetwork` guard prevents re-forwarding loops
+- `HanleBulletImpact`: `Core.AddPrefab` for `FX/Bloodsplats/Shotsplat*` now wrapped in `ApplyingFromNetwork = true`
+
+### Relevant files
+- `Patches/BulletFXSyncPatch.cs`: `HitscanBloodPatch` — broadened to forward all blood
+- `Players/SecondPlayerAnimController.cs`: `UpdateEmitterPosition()` — clip/position fallbacks
+- `Networking/LanNetworkManager.cs`: `HandlePlayerLightState` — immediate `UpdateEmitterPosition()`; `HandleBulletImpact` — `ApplyingFromNetwork` guard; `HandleDreamPositionUpdate` — updates spectator target; `_dreamSpectatorTarget` — hidden follow target; `SendDreamPositionUpdate` — dreamer→spectator position sync
+- `UI/DreamChoiceGUI.cs` (new): popup
+- `Sync/DreamSyncManager.cs`: popup integration; `StartDreamPositionSync`/`StopDreamPositionSync` coroutine; `EnterDreamSpectator()` — uses `_dreamSpectatorTarget` instead of proxy when spectating remote dream
+- `Networking/NetMessages.cs`: `DreamPositionUpdateMessage` + `DreamPositionUpdate = 79`
+
+---
+
+## Session 2026-05-28 (continued) — Dream sync simplified: non-dreamer freezes
+
+### Root cause: dream scene divergence
+When both machines load the dream scene independently, they produce different entity sets. The host's scene may miss entities the client's scene has (e.g. `Door_talkable_outside_bunker_underground_02`). Loading the dream scene on the host also corrupts the `WorldGrid` singleton, breaking the regular world server.
+
+### Fix: non-dreamer just freezes
+`DreamSyncManager.OnRemoteDreamStarted()` for regular (non-dual-presence) dreams now calls `ApplyDreamFreeze()` only — no scene loading, no popup, no spectate, no position sync. Dual-presence dreams (epilogue) still load the scene and follow the old path.
+
+### Changes applied
+- `Sync/DreamSyncManager.cs`: Regular remote dreams → `ApplyDreamFreeze()` only. Dual-presence path unchanged.
+- `Networking/LanNetworkManager.cs`: Removed `_dreamSpectatorTarget`, `GetOrCreateDreamSpectatorTarget()`, `HandleDreamPositionUpdate()`, `SendDreamPositionUpdate()`, and the `DreamPositionUpdate` switch case — all dead code.
+- `UI/DreamChoiceGUI.cs`: Dead code (no longer referenced), kept as orphan.
+
+### Remaining concerns
+- Dreamer still plays the dream normally (vanilla flow on both sides).
+- Non-dreamer freezes (`FreezeTracker.AddFreeze()` → `Core.pause(keepMusicAndEnviromental: true)`).
+- On dream end, non-dreamer unfreezes (`RemoveDreamFreeze()`).
+- Entity cleanup guard (`if (DreamSyncManager.IsLocalDreamActive) return;`) in `ClientEntityInterpolationService` still in place.
+- Blocking patch guards (`IsLocalDreamActive` → return true) in `ClientMeleeSensorPatch`, `ClientDamageRedirectPatch`, `DialogSyncInitiatePatch` still in place.
+- `DreamPositionUpdateMessage` type 79 definition kept in `NetMessages.cs` for message type numbering compatibility.

@@ -158,7 +158,11 @@ namespace DarkwoodMultiplayer.Networking
         /// <summary>Host→Client: full container inventory state snapshot.</summary>
         ContainerStateSync = 76,
         /// <summary>Host→Client: synchronize NPC reputation for non-morning-trader NPCs.</summary>
-        ReputationSync = 77
+        ReputationSync = 77,
+        /// <summary>Dreamer→Spectator: periodic position update during a dream so the spectator camera follows the dreamer.</summary>
+        DreamPositionUpdate = 79,
+        /// <summary>Highest used message type ID.</summary>
+        _Highest = 80
     }
 
     /// <summary>
@@ -568,6 +572,32 @@ namespace DarkwoodMultiplayer.Networking
     }
 
     /// <summary>
+    /// Dreamer→Spectator: periodic position update during a dream so the
+    /// spectator's camera stays at the dreamer's position.
+    /// </summary>
+    public struct DreamPositionUpdateMessage
+    {
+        /// <summary>Dreamer world position X.</summary>
+        public float PosX;
+        /// <summary>Dreamer world position Y.</summary>
+        public float PosY;
+        /// <summary>Dreamer world position Z.</summary>
+        public float PosZ;
+        /// <summary>Dreamer Y-axis rotation in degrees.</summary>
+        public float RotY;
+
+        public void Serialize(NetWriter w)
+        {
+            w.Put(PosX); w.Put(PosY); w.Put(PosZ); w.Put(RotY);
+        }
+
+        public static DreamPositionUpdateMessage Deserialize(NetReader r) => new DreamPositionUpdateMessage
+        {
+            PosX = r.GetFloat(), PosY = r.GetFloat(), PosZ = r.GetFloat(), RotY = r.GetFloat()
+        };
+    }
+
+    /// <summary>
     /// Sent immediately after connect so both sides agree on protocol version.
     /// </summary>
     public struct HandshakeMessage
@@ -728,6 +758,14 @@ namespace DarkwoodMultiplayer.Networking
         /// <summary>Writes a string value (empty string if null).</summary>
         public void Put(string value) => _inner.Put(value ?? string.Empty);
 
+        /// <summary>Writes a byte array (prefixed with length).</summary>
+        public void Put(byte[] value)
+        {
+            if (value == null) { _inner.Put(0); return; }
+            _inner.Put(value.Length);
+            _inner.Put(value);
+        }
+
         /// <summary>Resets the internal buffer for reuse.</summary>
         public void Reset() => _inner.Reset();
         /// <summary>Returns a copy of the written data as a byte array.</summary>
@@ -759,6 +797,18 @@ namespace DarkwoodMultiplayer.Networking
         public bool GetBool() => _inner.GetBool();
         /// <summary>Reads a string value.</summary>
         public string GetString() => _inner.GetString();
+        /// <summary>Reads a byte array (prefixed with length).</summary>
+        public byte[] GetBytes()
+        {
+            int len = _inner.GetInt();
+            if (len <= 0) return new byte[0];
+            byte[] raw = _inner.GetRemainingBytes();
+            if (raw == null) return new byte[0];
+            if (raw.Length <= len) return raw;
+            byte[] result = new byte[len];
+            System.Array.Copy(raw, 0, result, 0, len);
+            return result;
+        }
     }
 
     /// <summary>
@@ -2605,4 +2655,5 @@ namespace DarkwoodMultiplayer.Networking
             return arr;
         }
     }
+
 }
